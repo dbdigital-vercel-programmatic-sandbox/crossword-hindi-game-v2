@@ -3,6 +3,11 @@ import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http"
 
 let _db: NeonHttpDatabase | undefined
 
+const connectionString = process.env.DATABASE_URL ?? ""
+
+export const hasDatabaseConnection = Boolean(connectionString)
+export const sql = hasDatabaseConnection ? neon(connectionString) : null
+
 export function getDb() {
   if (!_db) {
     if (!process.env.DATABASE_URL) {
