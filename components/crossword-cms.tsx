@@ -514,7 +514,7 @@ export function CrosswordCms({
       setIsSuggestionsLoading(true)
 
       try {
-        const response = await fetch("/api/1.0/chat", {
+        const response = await fetch("/api/puzzles/suggestions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1600,24 +1600,24 @@ function WordEditorScreen({
                 <div className="text-right text-xs text-[#7a7468]">
                   <div>
                     {isSuggestionsLoading
-                      ? "loading ai suggested words"
+                      ? "loading suggestions"
                       : `${availableSuggestions.length} connect right now`}
                   </div>
                   <div>
                     {isSuggestionsLoading
-                      ? "loading ai suggested words"
+                      ? "loading suggestions"
                       : suggestionEngine === "ai"
-                        ? "AI theme-based suggestions"
+                        ? "AI-specific suggestions"
                         : aiAvailable
-                          ? "AI failed, showing dictionary fallback"
-                          : "AI not configured, using dictionary"}
+                          ? "Dictionary fallback suggestions"
+                          : "Dictionary fallback suggestions"}
                   </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {isSuggestionsLoading ? (
                   <div className="rounded-2xl bg-[#f6f3ec] px-4 py-3 text-sm text-[#6a7268]">
-                    loading ai suggested words
+                    loading suggestions
                   </div>
                 ) : availableSuggestions.length === 0 ? (
                   <div className="rounded-2xl bg-[#f6f3ec] px-4 py-3 text-sm text-[#6a7268]">

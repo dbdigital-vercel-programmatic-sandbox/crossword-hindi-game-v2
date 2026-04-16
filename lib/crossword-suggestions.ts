@@ -1,4 +1,4 @@
-import { Output, createGateway, generateText } from "ai"
+import { Output, gateway, generateText } from "ai"
 
 import { MAX_GRID_SIZE } from "@/lib/crossword-editor"
 
@@ -37,8 +37,82 @@ type SuggestionInput = {
 }
 
 const AI_GATEWAY_MODEL = "openai/gpt-4o-mini"
+const AI_GATEWAY_ENV_NAME = "APP_BUILDER_VERCEL_AI_GATEWAY"
 const AI_SYSTEM_PROMPT =
-  "You are an expert crossword constructor. Suggest strongly theme-matched single-word answers, favor vivid and specific entries over generic filler, and treat any user guidance as a high-priority constraint."
+  "You are an expert crossword constructor. Suggest single-word answers that are tightly aligned to the exact theme, title, and submitted guidance. Prefer exact domain entities over broad theme words, especially organizations, missions, agencies, acronyms, vehicles, payloads, facilities, instruments, and named programs. Avoid generic crossword filler and broad category words unless only a small minority are needed."
+
+const EXACT_THEME_BANK: Record<string, string[]> = {
+  bollywood: [
+    "SHOLAY",
+    "LAGAAN",
+    "DANGAL",
+    "SWADES",
+    "BARFI",
+    "ROCKSTAR",
+    "PATHAAN",
+    "SULTAN",
+    "KRRISH",
+    "OMKARA",
+    "DHOOM",
+    "MUGHAL",
+  ],
+  isro: [
+    "CHANDRAYAAN",
+    "MANGALYAAN",
+    "GAGANYAAN",
+    "ADITYAL",
+    "PSLV",
+    "GSLV",
+    "NAVIC",
+    "SRIHARIKOTA",
+    "SATISHDHAWAN",
+    "VIKRAM",
+    "PRAGYAN",
+    "ORBITER",
+    "LANDER",
+  ],
+  nasa: [
+    "APOLLO",
+    "ARTEMIS",
+    "VOYAGER",
+    "CASSINI",
+    "HUBBLE",
+    "JPL",
+    "ORION",
+    "KENNEDY",
+    "CAPE",
+    "ROVER",
+  ],
+  olympics: [
+    "OLYMPIAD",
+    "PARALYMPICS",
+    "PODIUM",
+    "HEPTATHLON",
+    "DECATHLON",
+    "TORCH",
+    "LAUREL",
+    "MEDAL",
+    "IOC",
+    "VELODROME",
+  ],
+  ipl: [
+    "POWERPLAY",
+    "SUPEROVER",
+    "WANKHEDE",
+    "EDEN",
+    "CHEPAUK",
+    "PLAYOFFS",
+    "ORANGE",
+    "PURPLE",
+    "SIXER",
+    "YORKER",
+  ],
+}
+
+const EXACT_THEME_GENERIC_WORDS: Record<string, string[]> = {
+  bollywood: ["FILM", "FILMS", "MOVIE", "MOVIES", "CINEMA", "INDIAN"],
+  isro: ["PROJECT", "SPACE", "MISSION"],
+}
 
 const THEME_BANK: Record<string, string[]> = {
   animals: [
@@ -564,8 +638,10 @@ export function buildSuggestions({
     selectedWords.flatMap((word) => normalizeAnswer(word).split(""))
   )
   const contextTokens = tokenizeContext(context)
+  const contextStems = getContextStems(contextTokens)
   const themeKeys = resolveThemeKeys(context)
-  const genericWords = getGenericWords(themeKeys)
+  const exactThemeKeys = resolveExactThemeKeys(contextTokens)
+  const genericWords = getGenericWords(themeKeys, exactThemeKeys)
   const scored = new Map<
     string,
     { suggestion: SuggestionWord; score: number }
@@ -589,6 +665,15 @@ export function buildSuggestions({
           ...item,
           score: 112,
         }))
+      : []),
+    ...(includeSeedSources
+      ? exactThemeKeys.flatMap((key) =>
+          (EXACT_THEME_BANK[key] ?? []).map((answer) => ({
+            answer,
+            source: "theme" as const,
+            score: 148,
+          }))
+        )
       : []),
     ...(includeSeedSources
       ? themeKeys.flatMap((key) =>
@@ -641,13 +726,16 @@ export function buildSuggestions({
     const specificityScore = getSpecificityScore({
       answer,
       contextTokens,
+      contextStems,
       themeKeys,
+      exactThemeKeys,
       source: entry.source,
     })
     const genericPenalty = getGenericPenalty({
       answer,
       genericWords,
       themeKeys,
+      exactThemeKeys,
       source: entry.source,
     })
     const total =
@@ -671,13 +759,16 @@ export function buildSuggestions({
     }
   })
 
-  return [...scored.values()]
-    .sort(
+  return balanceTopSuggestions({
+    entries: [...scored.values()].sort(
       (left, right) =>
         right.score - left.score ||
         left.suggestion.answer.localeCompare(right.suggestion.answer)
-    )
-    .map((entry) => entry.suggestion)
+    ),
+    genericWords,
+    themeKeys,
+    exactThemeKeys,
+  }).map((entry) => entry.suggestion)
 }
 
 export async function getSuggestionResponse({
@@ -695,21 +786,12 @@ export async function getSuggestionResponse({
     ? selectedWords
     : []
 
-  const aiInspirationPool = buildSuggestions({
+  const aiInspirationPool = buildAiInspirationPool({
     theme: normalizedTheme,
     title: normalizedTitle,
     difficulty: normalizedDifficulty,
     selectedWords: normalizedSelectedWords,
     guidance: normalizedGuidance,
-  }).map((suggestion) => suggestion.answer)
-
-  const dictionarySuggestions = buildSuggestions({
-    theme: normalizedTheme,
-    title: normalizedTitle,
-    difficulty: normalizedDifficulty,
-    selectedWords: normalizedSelectedWords,
-    guidance: normalizedGuidance,
-    includeDictionary: true,
   })
   const aiSuggestions = await suggestWordsWithAi({
     theme: normalizedTheme,
@@ -737,14 +819,21 @@ export async function getSuggestionResponse({
   }
 
   return {
-    suggestions: dictionarySuggestions,
+    suggestions: buildSuggestions({
+      theme: normalizedTheme,
+      title: normalizedTitle,
+      difficulty: normalizedDifficulty,
+      selectedWords: normalizedSelectedWords,
+      guidance: normalizedGuidance,
+      includeDictionary: true,
+    }),
     engine: "dictionary" as const,
     aiAvailable: isAiSuggestionAvailable(),
   }
 }
 
 export function isAiSuggestionAvailable() {
-  return Boolean(process.env.APP_BUILDER_VERCEL_AI_GATEWAY)
+  return Boolean(getAiGatewayApiKey())
 }
 
 export async function suggestWordsWithAi({
@@ -762,22 +851,25 @@ export async function suggestWordsWithAi({
   candidateWords?: string[]
   guidance?: string
 }) {
-  const apiKey = process.env.APP_BUILDER_VERCEL_AI_GATEWAY
+  const apiKey = getAiGatewayApiKey()
 
   if (!apiKey) {
     return []
   }
 
+  if (!process.env.AI_GATEWAY_API_KEY) {
+    process.env.AI_GATEWAY_API_KEY = apiKey
+  }
+
   const controller = new AbortController()
 
   try {
-    const gateway = createGateway({ apiKey })
     const result = await generateText({
       model: gateway(AI_GATEWAY_MODEL),
       system: AI_SYSTEM_PROMPT,
       prompt: JSON.stringify({
         instructions:
-          'Return JSON with a top-level "words" array. Suggest single-word uppercase answers that are strongly and specifically tied to the theme and title, follow the user guidance closely, avoid generic crossword filler, and prefer named entities, acronyms, programs, locations, vehicles, instruments, or subject-specific jargon over broad category words. Generic words are allowed, but keep them to a small minority of the list. Avoid repeats, avoid punctuation, and prefer entries that are likely to cross well with the existing words.',
+          'Return a top-level JSON object with a "words" array. Follow the submitted guidance closely. Prefer exact domain entities over broad theme words. Favor organizations, missions, agencies, acronyms, vehicles, payloads, facilities, instruments, and named programs. For ISRO project, return Indian space mission and program vocabulary first, such as CHANDRAYAAN, MANGALYAAN, PSLV, GSLV, and SRIHARIKOTA. Generic words are acceptable only as a small minority, and only when more specific options are exhausted. Use uppercase-style answers after normalization, no punctuation, letters only, no repeats, and entries that are likely to cross well with the existing words.',
         theme,
         title,
         guidance,
@@ -786,7 +878,7 @@ export async function suggestWordsWithAi({
         minLength: getDifficultyRange(difficulty).min,
         maxSuggestedLength: getDifficultyRange(difficulty).max,
         selectedWords,
-        inspirationPool: candidateWords.slice(0, 60),
+        inspirationPool: candidateWords.slice(0, 40),
         desiredCount: 30,
       }),
       output: Output.json({
@@ -803,6 +895,16 @@ export async function suggestWordsWithAi({
   } catch {
     return []
   }
+}
+
+function getAiGatewayApiKey() {
+  const configuredKey = process.env[AI_GATEWAY_ENV_NAME]?.trim()
+
+  if (configuredKey) {
+    return configuredKey
+  }
+
+  return process.env.AI_GATEWAY_API_KEY?.trim() ?? ""
 }
 
 function extractAiWords(value: unknown) {
@@ -839,28 +941,41 @@ function tokenizeContext(value: string) {
   )
 }
 
-function getGenericWords(themeKeys: string[]) {
-  return new Set(themeKeys.flatMap((key) => DOMAIN_GENERIC_WORDS[key] ?? []))
+function getGenericWords(themeKeys: string[], exactThemeKeys: string[]) {
+  return new Set([
+    ...themeKeys.flatMap((key) => DOMAIN_GENERIC_WORDS[key] ?? []),
+    ...exactThemeKeys.flatMap((key) => EXACT_THEME_GENERIC_WORDS[key] ?? []),
+  ])
 }
 
 function getSpecificityScore({
   answer,
   contextTokens,
+  contextStems,
   themeKeys,
+  exactThemeKeys,
   source,
 }: {
   answer: string
   contextTokens: Set<string>
+  contextStems: Set<string>
   themeKeys: string[]
+  exactThemeKeys: string[]
   source: SuggestionSource
 }) {
-  const hasThemeContext = themeKeys.length > 0 || contextTokens.size > 0
-  const looksSpecific =
-    answer.length >= 7 ||
-    /(?:YAAN|GRAM|NAV|CRAFT|SHIP|PORT|BASE|LAB|SAT)$/i.test(answer)
-  const matchesContextStem = [...contextTokens].some(
+  const hasThemeContext =
+    themeKeys.length > 0 || exactThemeKeys.length > 0 || contextTokens.size > 0
+  const looksSpecific = isLikelySpecificAnswer(answer)
+  const isAcronym = isAcronymLikeAnswer(answer)
+  const exactThemeMatch = exactThemeKeys.some((key) =>
+    (EXACT_THEME_BANK[key] ?? []).includes(answer)
+  )
+  const matchesContextToken = [...contextTokens].some(
     (token) =>
       token.length >= 4 && (answer.includes(token) || token.includes(answer))
+  )
+  const matchesContextStem = [...contextStems].some(
+    (stem) => stem.length >= 4 && answer.includes(stem)
   )
 
   let score = 0
@@ -870,15 +985,43 @@ function getSpecificityScore({
     hasThemeContext &&
     looksSpecific
   ) {
-    score += 14
+    score += 18
   }
 
   if (source === "ai" && answer.length >= 8) {
     score += 6
   }
 
-  if (matchesContextStem) {
+  if (isAcronym) {
+    score += exactThemeKeys.length > 0 ? 20 : 10
+  }
+
+  if (exactThemeMatch) {
+    score += 30
+  }
+
+  if (source === "theme" && looksSpecific) {
+    score += 6
+  }
+
+  if (source === "custom" && looksSpecific) {
     score += 8
+  }
+
+  if (matchesContextToken) {
+    score += 8
+  }
+
+  if (matchesContextStem) {
+    score += 12
+  }
+
+  if (looksSpecific) {
+    score += 6
+  }
+
+  if (exactThemeKeys.length > 0 && isLikelyProgramWord(answer)) {
+    score += 14
   }
 
   return score
@@ -888,32 +1031,250 @@ function getGenericPenalty({
   answer,
   genericWords,
   themeKeys,
+  exactThemeKeys,
   source,
 }: {
   answer: string
   genericWords: Set<string>
   themeKeys: string[]
+  exactThemeKeys: string[]
   source: SuggestionSource
 }) {
-  if (source !== "ai") {
+  if (source === "custom") {
     return 0
   }
 
   let penalty = 0
 
   if (genericWords.has(answer)) {
-    penalty += themeKeys.length > 0 ? 28 : 14
+    penalty +=
+      source === "ai"
+        ? exactThemeKeys.length > 0
+          ? 42
+          : themeKeys.length > 0
+            ? 28
+            : 14
+        : exactThemeKeys.length > 0
+          ? 20
+          : themeKeys.length > 0
+            ? 14
+            : 6
   }
 
   if (GENERIC_HINT_WORDS.has(answer)) {
-    penalty += 16
+    penalty += source === "ai" ? 16 : 8
   }
 
   if (answer.length <= 5 && themeKeys.length > 0) {
-    penalty += 4
+    penalty += source === "ai" ? 4 : 2
+  }
+
+  if (exactThemeKeys.length > 0 && !isLikelySpecificAnswer(answer)) {
+    penalty += source === "ai" ? 10 : 4
   }
 
   return penalty
+}
+
+function buildAiInspirationPool({
+  theme,
+  title,
+  difficulty,
+  selectedWords = [],
+  guidance = "",
+}: SuggestionInput) {
+  const context = `${theme} ${title} ${guidance}`.toLowerCase()
+  const contextTokens = tokenizeContext(context)
+  const exactThemeKeys = resolveExactThemeKeys(contextTokens)
+  const themeKeys = resolveThemeKeys(context)
+  const selectedSet = new Set(selectedWords.map(normalizeAnswer))
+  const seedAnswers = new Set<string>()
+
+  tokenizeToSuggestions(theme, "theme").forEach((item) => {
+    seedAnswers.add(item.answer)
+  })
+
+  tokenizeToSuggestions(title, "title").forEach((item) => {
+    seedAnswers.add(item.answer)
+  })
+
+  tokenizeToSuggestions(guidance, "custom").forEach((item) => {
+    seedAnswers.add(item.answer)
+  })
+
+  exactThemeKeys.forEach((key) => {
+    ;(EXACT_THEME_BANK[key] ?? []).forEach((answer) => {
+      seedAnswers.add(answer)
+    })
+  })
+
+  themeKeys.forEach((key) => {
+    THEME_BANK[key]
+      .filter(
+        (answer) =>
+          isLikelySpecificAnswer(answer) || isLikelyProgramWord(answer)
+      )
+      .forEach((answer) => {
+        seedAnswers.add(answer)
+      })
+  })
+
+  return [...seedAnswers]
+    .filter((answer) => answer.length >= getDifficultyRange(difficulty).min)
+    .filter((answer) => answer.length <= MAX_GRID_SIZE)
+    .filter((answer) => !selectedSet.has(answer))
+    .sort((left, right) => {
+      const leftSpecific = getAiSeedPriority(
+        left,
+        contextTokens,
+        exactThemeKeys
+      )
+      const rightSpecific = getAiSeedPriority(
+        right,
+        contextTokens,
+        exactThemeKeys
+      )
+
+      return rightSpecific - leftSpecific || left.localeCompare(right)
+    })
+}
+
+function isLikelySpecificAnswer(answer: string) {
+  const vowelCount = (answer.match(/[AEIOU]/g) ?? []).length
+
+  return (
+    answer.length >= 7 ||
+    /(?:YAAN|GRAM|NAV|CRAFT|SHIP|PORT|BASE|LAB|SAT|SITE|STAN|METER)$/i.test(
+      answer
+    ) ||
+    (answer.length >= 3 && answer.length <= 5 && vowelCount <= 1) ||
+    /(?:IKOTA|DHAWAN|PRAGYAN|VIKRAM)$/i.test(answer)
+  )
+}
+
+function isAcronymLikeAnswer(answer: string) {
+  const vowelCount = (answer.match(/[AEIOU]/g) ?? []).length
+
+  return answer.length >= 3 && answer.length <= 6 && vowelCount <= 1
+}
+
+function isLikelyProgramWord(answer: string) {
+  return /(?:YAAN|SLV|NAVIC|GRAM|SAT|ORBITER|LANDER|ROVER|DHawan|IKOTA)$/i.test(
+    answer
+  )
+}
+
+function getAiSeedPriority(
+  answer: string,
+  contextTokens: Set<string>,
+  exactThemeKeys: string[]
+) {
+  let score = 0
+
+  if (isAcronymLikeAnswer(answer)) {
+    score += 12
+  }
+
+  if (isLikelySpecificAnswer(answer)) {
+    score += 10
+  }
+
+  if (isLikelyProgramWord(answer)) {
+    score += 10
+  }
+
+  if (
+    exactThemeKeys.some((key) => (EXACT_THEME_BANK[key] ?? []).includes(answer))
+  ) {
+    score += 24
+  }
+
+  if (
+    [...contextTokens].some(
+      (token) =>
+        token.length >= 4 && (answer.includes(token) || token.includes(answer))
+    )
+  ) {
+    score += 10
+  }
+
+  return score
+}
+
+function balanceTopSuggestions({
+  entries,
+  genericWords,
+  themeKeys,
+  exactThemeKeys,
+}: {
+  entries: Array<{ suggestion: SuggestionWord; score: number }>
+  genericWords: Set<string>
+  themeKeys: string[]
+  exactThemeKeys: string[]
+}) {
+  const shouldBalance =
+    exactThemeKeys.length > 0 ||
+    (themeKeys.length > 0 &&
+      entries.some(
+        (entry) => !isBroadGenericAnswer(entry.suggestion.answer, genericWords)
+      ))
+
+  if (!shouldBalance) {
+    return entries
+  }
+
+  const topWindow = exactThemeKeys.length > 0 ? 12 : 10
+  const genericCap = exactThemeKeys.length > 0 ? 2 : 3
+  const prioritized: Array<{ suggestion: SuggestionWord; score: number }> = []
+  const deferred: Array<{ suggestion: SuggestionWord; score: number }> = []
+  let genericCount = 0
+
+  entries.forEach((entry, index) => {
+    const isBroadGeneric = isBroadGenericAnswer(
+      entry.suggestion.answer,
+      genericWords
+    )
+
+    if (index < topWindow && isBroadGeneric && genericCount >= genericCap) {
+      deferred.push(entry)
+      return
+    }
+
+    prioritized.push(entry)
+
+    if (index < topWindow && isBroadGeneric) {
+      genericCount += 1
+    }
+  })
+
+  return [...prioritized, ...deferred]
+}
+
+function isBroadGenericAnswer(answer: string, genericWords: Set<string>) {
+  return genericWords.has(answer) || GENERIC_HINT_WORDS.has(answer)
+}
+
+function getContextStems(contextTokens: Set<string>) {
+  const stems = new Set<string>()
+
+  contextTokens.forEach((token) => {
+    if (token.length >= 4) {
+      stems.add(token.slice(0, Math.min(token.length, 6)))
+    }
+
+    if (token.length >= 5) {
+      stems.add(token.slice(0, 4))
+      stems.add(token.slice(-4))
+    }
+  })
+
+  return stems
+}
+
+function resolveExactThemeKeys(contextTokens: Set<string>) {
+  return Object.keys(EXACT_THEME_BANK).filter((key) =>
+    [...contextTokens].some((token) => token.toLowerCase() === key)
+  )
 }
 
 function resolveThemeKeys(context: string) {
