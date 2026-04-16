@@ -4,11 +4,13 @@ import { getSession } from "@/lib/internal/auth-session"
 import { CmsShell } from "./cms-shell"
 import { LoginScreen } from "./login-screen"
 
-const AUTH_URL = process.env.NEXT_PUBLIC_AUTH_URL ?? "https://auth.bhaskarapp.com"
+const AUTH_URL =
+  process.env.NEXT_PUBLIC_AUTH_URL ?? "https://auth.bhaskarapp.com"
 
 async function buildLoginUrl() {
   const requestHeaders = await headers()
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? ""
+  const host =
+    requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? ""
   const proto = requestHeaders.get("x-forwarded-proto") ?? "https"
   const origin = `${proto}://${host}`
   const url = requestHeaders.get("x-url") ?? "/cms"
