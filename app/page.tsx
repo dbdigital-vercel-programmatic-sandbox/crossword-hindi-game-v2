@@ -335,12 +335,23 @@ export default function Page() {
     return () => window.clearTimeout(timeout)
   }, [logoTapCount])
 
+  const resetPuzzleState = useCallback(
+    (nextScreen: Screen) => {
+      setGame(puzzleModel.initialGame)
+      setHintPromptClueId(null)
+      setHintNudgeVersion((current) => current + 1)
+      setScreen(nextScreen)
+    },
+    [puzzleModel.initialGame]
+  )
+
   const resetCurrentPuzzle = useCallback(() => {
-    setGame(puzzleModel.initialGame)
-    setHintPromptClueId(null)
-    setHintNudgeVersion((current) => current + 1)
-    setScreen("game")
-  }, [puzzleModel.initialGame])
+    resetPuzzleState("game")
+  }, [resetPuzzleState])
+
+  const resetPuzzleFromHome = useCallback(() => {
+    resetPuzzleState("home")
+  }, [resetPuzzleState])
 
   const resetHintHighlightTimer = useCallback(() => {
     setIsHintButtonHighlighted(false)
@@ -973,6 +984,19 @@ export default function Page() {
               >
                 Settings
               </button>
+
+              {isPuzzleComplete && (
+                <button
+                  type="button"
+                  onClick={resetPuzzleFromHome}
+                  className={cn(
+                    homeBodyFont.className,
+                    "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-[#F05C21] bg-[#FFF3ED] px-[14px] text-[16px] leading-[24px] font-semibold text-[#B84212]"
+                  )}
+                >
+                  Reset Game
+                </button>
+              )}
             </div>
 
             {(hasProgress || isPuzzleComplete) && (
