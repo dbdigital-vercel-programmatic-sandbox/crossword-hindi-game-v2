@@ -1,14 +1,22 @@
 import { CrosswordCms } from "@/components/crossword-cms"
-import { isDatabaseEnabled, listAllPuzzles } from "@/lib/crossword-puzzle-store"
+import {
+  getFallbackPuzzleId,
+  isDatabaseEnabled,
+  listAllPuzzles,
+} from "@/lib/crossword-puzzle-store"
 
 export const dynamic = "force-dynamic"
 
 export default async function CmsPage() {
-  const puzzles = await listAllPuzzles()
+  const [puzzles, fallbackPuzzleId] = await Promise.all([
+    listAllPuzzles(),
+    getFallbackPuzzleId(),
+  ])
 
   return (
     <CrosswordCms
       initialPuzzles={puzzles}
+      initialFallbackPuzzleId={fallbackPuzzleId}
       databaseConnected={isDatabaseEnabled()}
     />
   )
