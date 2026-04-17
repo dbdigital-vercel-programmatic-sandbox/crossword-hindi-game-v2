@@ -1872,7 +1872,7 @@ function WordEditorScreen({
       <section className="rounded-[28px] border border-[#d8d1c4] bg-white p-6 shadow-sm xl:sticky xl:top-6 xl:self-start">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">Crossword preview</h2>
+            <h2 className="text-lg font-semibold">वर्ग पहेली preview</h2>
             <p className="mt-1 text-sm text-[#5f675f]">
               {hoverPreview
                 ? hoverPreview.rearrangesExistingWords

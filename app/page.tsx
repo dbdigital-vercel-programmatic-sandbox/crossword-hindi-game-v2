@@ -25,6 +25,7 @@ const homeBodyFont = gameFont
 type LockSource = "given" | "revealed" | "solved"
 type FeedbackType = "wrong" | "correct"
 type Screen = "home" | "game" | "summary"
+type CompactMode = "normal" | "compact" | "tight"
 
 type StreakDay = {
   label: string
@@ -49,6 +50,7 @@ type GameState = {
   lockSources: Partial<Record<string, LockSource>>
   solvedIds: string[]
   completedIds: string[]
+  wrongGuessCounts: Record<string, number>
   elapsedSeconds: number
   activeClueId: string
   activeIndex: number
@@ -85,7 +87,7 @@ const keyboardRows = [
 ]
 
 const keyboardButtonClassName =
-  "inline-flex h-[48px] w-full min-w-0 items-center justify-center rounded-[8px] bg-white text-[18px] leading-[26px] font-semibold text-[#1B1B1D] shadow-[0px_1.7777777910232544px_0px_rgba(0,0,0,0.25)]"
+  "inline-flex w-full min-w-0 items-center justify-center bg-white font-semibold text-[#1B1B1D] shadow-[0px_1.7777777910232544px_0px_rgba(0,0,0,0.25)]"
 
 const dlsAssets = {
   home: "https://raw.githubusercontent.com/joefrancis-dot/DLS-assets/main/Home_Outline.svg",
@@ -136,11 +138,15 @@ export default function Page() {
   const [isTestScheduleOpen, setIsTestScheduleOpen] = useState(false)
   const [isHintsTurnedOff, setIsHintsTurnedOff] = useState(false)
   const [isWordBlastTurnedOff, setIsWordBlastTurnedOff] = useState(false)
+  const [hintNudgeVersion, setHintNudgeVersion] = useState(0)
+  const [hintPromptClueId, setHintPromptClueId] = useState<string | null>(null)
+  const [isHintButtonHighlighted, setIsHintButtonHighlighted] = useState(false)
   const [logoTapCount, setLogoTapCount] = useState(0)
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null)
   const [completionHistory, setCompletionHistory] = useState<
     Record<string, boolean>
   >({})
+  const [compactMode, setCompactMode] = useState<CompactMode>("normal")
   const storageKey = useMemo(
     () => getPuzzleStorageKey(scheduledPuzzle.id),
     [scheduledPuzzle.id]
@@ -233,6 +239,20 @@ export default function Page() {
   }, [])
 
   useEffect(() => {
+    const updateCompactMode = () => {
+      const height = window.innerHeight
+      setCompactMode(
+        height <= 720 ? "tight" : height <= 780 ? "compact" : "normal"
+      )
+    }
+
+    updateCompactMode()
+    window.addEventListener("resize", updateCompactMode)
+
+    return () => window.removeEventListener("resize", updateCompactMode)
+  }, [])
+
+  useEffect(() => {
     storeSettings({
       isHintsTurnedOff,
       isWordBlastTurnedOff,
@@ -317,8 +337,16 @@ export default function Page() {
 
   const resetCurrentPuzzle = useCallback(() => {
     setGame(puzzleModel.initialGame)
+    setHintPromptClueId(null)
+    setHintNudgeVersion((current) => current + 1)
     setScreen("game")
   }, [puzzleModel.initialGame])
+
+  const resetHintHighlightTimer = useCallback(() => {
+    setIsHintButtonHighlighted(false)
+    setHintPromptClueId(null)
+    setHintNudgeVersion((current) => current + 1)
+  }, [])
 
   const handleLogoTap = useCallback(() => {
     setLogoTapCount((current) => {
@@ -341,6 +369,7 @@ export default function Page() {
 
   const selectClue = useCallback(
     (clueId: string, preferredIndex?: number) => {
+      resetHintHighlightTimer()
       setGame((current) => {
         if (current.feedback?.type === "wrong") {
           return current
@@ -364,7 +393,7 @@ export default function Page() {
         }
       })
     },
-    [clueById]
+    [clueById, resetHintHighlightTimer]
   )
 
   const cycleClue = useCallback(
@@ -379,6 +408,7 @@ export default function Page() {
 
   const handleLetter = useCallback(
     (letter: string) => {
+      resetHintHighlightTimer()
       setGame((current) => {
         const clue = clueById[current.activeClueId]
         if (
@@ -462,6 +492,10 @@ export default function Page() {
             lockSources: revealOutcome.lockSources,
             solvedIds: nextSolvedIds,
             completedIds: nextCompletedIds,
+            wrongGuessCounts: {
+              ...nextState.wrongGuessCounts,
+              [clue.id]: 0,
+            },
             feedback: nextFeedback,
           }
 
@@ -495,6 +529,10 @@ export default function Page() {
 
         return {
           ...nextState,
+          wrongGuessCounts: {
+            ...current.wrongGuessCounts,
+            [clue.id]: (current.wrongGuessCounts[clue.id] ?? 0) + 1,
+          },
           feedback: nextFeedback,
           activeIndex:
             incorrectIndex === -1
@@ -503,10 +541,18 @@ export default function Page() {
         }
       })
     },
-    [cellData, clueById, clueOrder, clues, isWordBlastTurnedOff]
+    [
+      cellData,
+      clueById,
+      clueOrder,
+      clues,
+      isWordBlastTurnedOff,
+      resetHintHighlightTimer,
+    ]
   )
 
   const handleBackspace = useCallback(() => {
+    resetHintHighlightTimer()
     setGame((current) => {
       const clue = clueById[current.activeClueId]
       if (
@@ -557,9 +603,10 @@ export default function Page() {
         feedback: null,
       }
     })
-  }, [cellData, clueById, clues])
+  }, [cellData, clueById, clues, resetHintHighlightTimer])
 
   const handleHintPowerUp = useCallback(() => {
+    resetHintHighlightTimer()
     setGame((current) => {
       const clue = clueById[current.activeClueId]
       if (
@@ -619,7 +666,14 @@ export default function Page() {
 
       return nextState
     })
-  }, [cellData, clueById, clueOrder, clues, isHintsTurnedOff])
+  }, [
+    cellData,
+    clueById,
+    clueOrder,
+    clues,
+    isHintsTurnedOff,
+    resetHintHighlightTimer,
+  ])
 
   const canUseHint = useMemo(() => {
     const active = clueById[game.activeClueId]
@@ -666,7 +720,11 @@ export default function Page() {
       return
     }
 
+    const feedbackClueId = game.feedback.clueId
+
     const timeout = window.setTimeout(() => {
+      let shouldPromptHint = false
+
       setGame((current) => {
         if (
           current.feedback?.type !== "wrong" ||
@@ -676,6 +734,7 @@ export default function Page() {
         }
 
         const clue = clueById[current.feedback.clueId]
+        shouldPromptHint = (current.wrongGuessCounts[clue.id] ?? 0) >= 2
         const clearedEntries = clearEditableClueEntries(
           current.entries,
           current.lockSources,
@@ -694,6 +753,10 @@ export default function Page() {
           feedback: null,
         }
       })
+
+      if (shouldPromptHint) {
+        setHintPromptClueId(feedbackClueId)
+      }
     }, 360)
 
     return () => window.clearTimeout(timeout)
@@ -713,6 +776,41 @@ export default function Page() {
 
     return () => window.clearInterval(interval)
   }, [isPauseOpen, isPuzzleComplete, screen])
+
+  useEffect(() => {
+    if (
+      screen !== "game" ||
+      isPauseOpen ||
+      isPuzzleComplete ||
+      isHintsTurnedOff ||
+      !canUseHint
+    ) {
+      setIsHintButtonHighlighted(false)
+      return
+    }
+
+    if (hintPromptClueId === game.activeClueId) {
+      setIsHintButtonHighlighted(true)
+      return
+    }
+
+    setIsHintButtonHighlighted(false)
+
+    const timeout = window.setTimeout(() => {
+      setIsHintButtonHighlighted(true)
+    }, 8000)
+
+    return () => window.clearTimeout(timeout)
+  }, [
+    canUseHint,
+    game.activeClueId,
+    hintNudgeVersion,
+    hintPromptClueId,
+    isHintsTurnedOff,
+    isPauseOpen,
+    isPuzzleComplete,
+    screen,
+  ])
 
   useEffect(() => {
     if (screen !== "game") {
@@ -821,7 +919,7 @@ export default function Page() {
                     "flex w-full flex-col justify-center self-stretch text-center text-[28px] font-extrabold text-black"
                   )}
                 >
-                  Crossword
+                  वर्ग पहेली
                 </div>
               </div>
 
@@ -1283,11 +1381,17 @@ export default function Page() {
     <main
       className={cn(
         gameFont.className,
-        "relative inline-flex h-svh w-full items-start justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]"
+        "relative flex min-h-[100dvh] w-full flex-col overflow-hidden bg-[#F6F0D7]"
       )}
     >
-      <header className="fixed top-0 right-0 left-0 z-30 w-full bg-transparent">
-        <div className="mx-auto w-full max-w-[430px] px-[12px] pt-[12px]">
+      <header className="z-30 w-full shrink-0 bg-transparent">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-[430px] px-[12px] pt-[12px] pb-[10px]",
+            compactMode === "compact" && "pt-[10px] pb-[8px]",
+            compactMode === "tight" && "pt-[8px] pb-[6px]"
+          )}
+        >
           <div className="grid w-full grid-cols-[40px_1fr_40px] items-center gap-[8px]">
             <button
               type="button"
@@ -1319,7 +1423,9 @@ export default function Page() {
                 aria-label="Use hint power-up"
                 disabled={!canUseHint}
                 className={cn(
-                  "inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px] transition-opacity",
+                  "inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px] transition-[opacity,transform,box-shadow] duration-200",
+                  isHintButtonHighlighted &&
+                    "scale-105 animate-pulse ring-4 ring-[#FFB067] ring-offset-2 ring-offset-[#F6F0D7]",
                   !canUseHint && "cursor-not-allowed opacity-45"
                 )}
               >
@@ -1336,21 +1442,47 @@ export default function Page() {
             )}
           </div>
 
-          <div className="mt-[8px] flex w-full justify-center">
-            <div className="inline-flex items-center justify-center gap-[6px] rounded-[32px] bg-black px-[8px] py-[2px]">
-              <div className="text-center text-[16px] leading-[24px] font-semibold text-white">
+          <div
+            className={cn(
+              "mt-[8px] flex w-full justify-center",
+              compactMode === "compact" && "mt-[6px]",
+              compactMode === "tight" && "mt-[4px]"
+            )}
+          >
+            <div
+              className={cn(
+                "inline-flex items-center justify-center gap-[6px] rounded-[32px] bg-black px-[8px] py-[2px]",
+                compactMode === "compact" && "gap-[5px] px-[7px]",
+                compactMode === "tight" && "gap-[4px] px-[6px] py-[1px]"
+              )}
+            >
+              <div
+                className={cn(
+                  "text-center text-[16px] leading-[24px] font-semibold text-white",
+                  compactMode === "compact" && "text-[15px] leading-[22px]",
+                  compactMode === "tight" && "text-[14px] leading-[20px]"
+                )}
+              >
                 {timerLabel.replace(/^0/, "")}
               </div>
               <button
                 type="button"
                 onClick={() => setIsPauseOpen(true)}
                 aria-label="Pause game"
-                className="inline-flex h-[20px] w-[20px] items-center justify-center"
+                className={cn(
+                  "inline-flex h-[20px] w-[20px] items-center justify-center",
+                  compactMode === "compact" && "h-[18px] w-[18px]",
+                  compactMode === "tight" && "h-[16px] w-[16px]"
+                )}
               >
                 <img
                   src={dlsAssets.pause}
                   alt="Pause"
-                  className="h-[20px] w-[20px]"
+                  className={cn(
+                    "h-[20px] w-[20px]",
+                    compactMode === "compact" && "h-[18px] w-[18px]",
+                    compactMode === "tight" && "h-[16px] w-[16px]"
+                  )}
                   width={20}
                   height={20}
                   loading="lazy"
@@ -1362,10 +1494,20 @@ export default function Page() {
         </div>
       </header>
 
-      <div className="mx-auto inline-flex h-full w-full max-w-[430px] flex-1 flex-col items-center justify-start gap-[15px] px-[12px] pt-[106px] pb-[196px]">
+      <div
+        className={cn(
+          "mx-auto flex min-h-0 w-full max-w-[430px] flex-1 flex-col overflow-y-auto px-[12px] pb-[12px]",
+          compactMode === "compact" && "pb-[10px]",
+          compactMode === "tight" && "pb-[8px]"
+        )}
+      >
         <section className="flex min-h-0 w-full flex-1 flex-col items-center justify-center self-stretch">
           <div
-            className="mx-auto grid w-full max-w-[390px] gap-[3.92px]"
+            className={cn(
+              "mx-auto grid w-full max-w-[390px] gap-[3.92px]",
+              compactMode === "compact" && "max-w-[352px] gap-[3.2px]",
+              compactMode === "tight" && "max-w-[320px] gap-[2.8px]"
+            )}
             style={{
               gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
             }}
@@ -1380,7 +1522,11 @@ export default function Page() {
                 return (
                   <div
                     key={key}
-                    className="aspect-square rounded-[3.92px] bg-[#C5D89D]"
+                    className={cn(
+                      "aspect-square rounded-[3.92px] bg-[#C5D89D]",
+                      compactMode === "compact" && "rounded-[3.2px]",
+                      compactMode === "tight" && "rounded-[2.8px]"
+                    )}
                   />
                 )
               }
@@ -1427,6 +1573,8 @@ export default function Page() {
                   }}
                   className={cn(
                     "relative flex aspect-square items-center justify-center rounded-[3.92px] p-[7.85px] transition-all duration-200",
+                    compactMode === "compact" && "rounded-[3.2px] p-[6.2px]",
+                    compactMode === "tight" && "rounded-[2.8px] p-[5.2px]",
                     feedbackMatch?.type === "wrong"
                       ? "animate-clue-shake bg-[#f5b5b5]"
                       : completedCell
@@ -1439,7 +1587,14 @@ export default function Page() {
                   )}
                 >
                   {cell.number ? (
-                    <span className="absolute top-0 left-[2.14px] text-[6.28px] font-semibold text-[#006BAE]">
+                    <span
+                      className={cn(
+                        "absolute top-0 left-[2.14px] text-[6.28px] font-semibold text-[#006BAE]",
+                        compactMode === "compact" &&
+                          "left-[1.8px] text-[5.6px]",
+                        compactMode === "tight" && "left-[1.4px] text-[5px]"
+                      )}
+                    >
                       {cell.number}
                     </span>
                   ) : null}
@@ -1447,6 +1602,8 @@ export default function Page() {
                   <span
                     className={cn(
                       "text-center text-[12.56px] leading-none font-semibold",
+                      compactMode === "compact" && "text-[11.4px]",
+                      compactMode === "tight" && "text-[10.4px]",
                       lockSource === "given"
                         ? "text-[#006BAE]"
                         : completedCell ||
@@ -1465,11 +1622,19 @@ export default function Page() {
           </div>
         </section>
 
-        <div className="mt-auto flex w-full flex-col gap-[15px] self-stretch">
+        <div
+          className={cn(
+            "mt-auto flex w-full flex-col gap-[15px] self-stretch",
+            compactMode === "compact" && "gap-[12px]",
+            compactMode === "tight" && "gap-[10px]"
+          )}
+        >
           <section
             className={cn(
               homeTitleFont.className,
-              "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#89986D] px-[5px] py-[8px]"
+              "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#89986D] px-[5px] py-[8px]",
+              compactMode === "compact" && "min-h-[70px] py-[7px]",
+              compactMode === "tight" && "min-h-[62px] py-[6px]"
             )}
           >
             <button
@@ -1486,12 +1651,28 @@ export default function Page() {
 
             <div
               key={activeClue.id}
-              className="animate-clue-fade flex min-h-full flex-1 flex-col items-start justify-center gap-[5px] self-stretch px-[8px]"
+              className={cn(
+                "animate-clue-fade flex min-h-full flex-1 flex-col items-start justify-center gap-[5px] self-stretch px-[8px]",
+                compactMode === "compact" && "gap-[4px] px-[7px]",
+                compactMode === "tight" && "gap-[3px] px-[6px]"
+              )}
             >
-              <div className="text-[11px] font-semibold tracking-[2.2px] text-[#C5D89D] uppercase">
+              <div
+                className={cn(
+                  "text-[11px] font-semibold tracking-[2.2px] text-[#C5D89D] uppercase",
+                  compactMode === "compact" && "text-[10px] tracking-[2px]",
+                  compactMode === "tight" && "text-[9px] tracking-[1.6px]"
+                )}
+              >
                 Current Clue
               </div>
-              <div className="text-[16px] leading-[20px] font-semibold text-[#F6F0D7]">
+              <div
+                className={cn(
+                  "text-[16px] leading-[20px] font-semibold text-[#F6F0D7]",
+                  compactMode === "compact" && "text-[15px] leading-[18px]",
+                  compactMode === "tight" && "text-[14px] leading-[17px]"
+                )}
+              >
                 {activeClue.number}
                 {activeClue.direction === "across" ? "a" : "d"}.{" "}
                 {activeClue.clue}
@@ -1513,34 +1694,93 @@ export default function Page() {
         </div>
       </div>
 
-      <section className="fixed right-0 bottom-0 left-0 z-20 bg-black/25 px-[12px] pt-[12px] pb-[calc(env(safe-area-inset-bottom)+12px)]">
-        <div className="mx-auto flex w-full max-w-[430px] flex-col gap-[8px]">
-          <div className="grid w-full grid-cols-10 gap-[6px]">
+      <section
+        className={cn(
+          "z-20 w-full shrink-0 bg-black/25 px-[12px] pt-[12px] pb-[calc(env(safe-area-inset-bottom)+12px)]",
+          compactMode === "compact" &&
+            "pt-[10px] pb-[calc(env(safe-area-inset-bottom)+10px)]",
+          compactMode === "tight" &&
+            "pt-[8px] pb-[calc(env(safe-area-inset-bottom)+8px)]"
+        )}
+      >
+        <div
+          className={cn(
+            "mx-auto flex w-full max-w-[430px] flex-col gap-[8px]",
+            compactMode === "compact" && "gap-[6px]",
+            compactMode === "tight" && "gap-[5px]"
+          )}
+        >
+          <div
+            className={cn(
+              "grid w-full grid-cols-10 gap-[6px]",
+              compactMode === "compact" && "gap-[5px]",
+              compactMode === "tight" && "gap-[4px]"
+            )}
+          >
             {keyboardRows[0].map((key) => (
-              <KeyButton key={key} value={key} onPress={handleLetter} />
+              <KeyButton
+                key={key}
+                value={key}
+                onPress={handleLetter}
+                compactMode={compactMode}
+              />
             ))}
           </div>
 
-          <div className="grid w-full grid-cols-9 gap-[6px] px-[6%]">
+          <div
+            className={cn(
+              "grid w-full grid-cols-9 gap-[6px] px-[6%]",
+              compactMode === "compact" && "gap-[5px]",
+              compactMode === "tight" && "gap-[4px]"
+            )}
+          >
             {keyboardRows[1].map((key) => (
-              <KeyButton key={key} value={key} onPress={handleLetter} />
+              <KeyButton
+                key={key}
+                value={key}
+                onPress={handleLetter}
+                compactMode={compactMode}
+              />
             ))}
           </div>
 
-          <div className="grid w-full grid-cols-[repeat(7,minmax(0,1fr))_1.35fr] gap-[6px] px-[8.5%]">
+          <div
+            className={cn(
+              "grid w-full grid-cols-[repeat(7,minmax(0,1fr))_1.35fr] gap-[6px] px-[8.5%]",
+              compactMode === "compact" && "gap-[5px]",
+              compactMode === "tight" && "gap-[4px]"
+            )}
+          >
             {keyboardRows[2].map((key) => (
-              <KeyButton key={key} value={key} onPress={handleLetter} />
+              <KeyButton
+                key={key}
+                value={key}
+                onPress={handleLetter}
+                compactMode={compactMode}
+              />
             ))}
             <button
               type="button"
               onClick={handleBackspace}
-              className={keyboardButtonClassName}
+              className={cn(
+                keyboardButtonClassName,
+                compactMode === "normal" &&
+                  "h-[48px] rounded-[8px] text-[18px] leading-[26px]",
+                compactMode === "compact" &&
+                  "h-[44px] rounded-[8px] text-[16px] leading-[22px]",
+                compactMode === "tight" &&
+                  "h-[40px] rounded-[7px] text-[15px] leading-[20px]"
+              )}
               aria-label="Backspace"
             >
               <img
                 src={dlsAssets.backspace}
                 alt="Backspace"
-                className="h-[20px] w-[20px]"
+                className={cn(
+                  "h-[20px] w-[20px]",
+                  compactMode === "compact" && "h-[18px] w-[18px]",
+                  compactMode === "tight" && "h-[16px] w-[16px]"
+                )}
                 width={20}
                 height={20}
                 loading="lazy"
@@ -1598,15 +1838,26 @@ export default function Page() {
 function KeyButton({
   value,
   onPress,
+  compactMode,
 }: {
   value: string
   onPress: (value: string) => void
+  compactMode: CompactMode
 }) {
   return (
     <button
       type="button"
       onClick={() => onPress(value)}
-      className={cn(homeBodyFont.className, keyboardButtonClassName)}
+      className={cn(
+        homeBodyFont.className,
+        keyboardButtonClassName,
+        compactMode === "normal" &&
+          "h-[48px] rounded-[8px] text-[18px] leading-[26px]",
+        compactMode === "compact" &&
+          "h-[44px] rounded-[8px] text-[16px] leading-[22px]",
+        compactMode === "tight" &&
+          "h-[40px] rounded-[7px] text-[15px] leading-[20px]"
+      )}
     >
       {value}
     </button>
@@ -1654,11 +1905,11 @@ function HomeMascot({ onTap }: { onTap: () => void }) {
       type="button"
       onClick={onTap}
       className="rounded-full"
-      aria-label="Crossword logo"
+      aria-label="वर्ग पहेली logo"
     >
       <img
         src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
-        alt="Crossword logo"
+        alt="वर्ग पहेली logo"
         className="h-[100px] w-[100px] shrink-0 object-contain"
         width={100}
         height={100}
@@ -1758,6 +2009,7 @@ function buildPuzzleModel(puzzle: {
     lockSources: givenLocks,
     solvedIds,
     completedIds: [],
+    wrongGuessCounts: {},
     elapsedSeconds: 0,
     activeClueId: firstActiveClueId,
     activeIndex: firstEmptyIndex(
@@ -2079,6 +2331,18 @@ function loadStoredGame(storageKey: string, puzzleModel: PuzzleModel) {
         return typeof clueId === "string" && clueId in puzzleModel.clueById
       }
     )
+    const wrongGuessCounts = Object.fromEntries(
+      Object.entries(parsed.wrongGuessCounts ?? {}).filter(
+        ([clueId, value]) => {
+          return (
+            clueId in puzzleModel.clueById &&
+            typeof value === "number" &&
+            Number.isFinite(value) &&
+            value >= 0
+          )
+        }
+      )
+    ) as Record<string, number>
     const activeClueId =
       typeof parsed.activeClueId === "string" &&
       parsed.activeClueId in puzzleModel.clueById
@@ -2113,6 +2377,7 @@ function loadStoredGame(storageKey: string, puzzleModel: PuzzleModel) {
       },
       solvedIds,
       completedIds,
+      wrongGuessCounts,
       elapsedSeconds,
       activeClueId,
       activeIndex,
