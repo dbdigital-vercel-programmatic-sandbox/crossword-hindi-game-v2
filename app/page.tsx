@@ -247,7 +247,9 @@ export default function Page() {
     return () => window.clearTimeout(timeout)
   }, [dateKey])
 
-  const activeClue = clueById[game.activeClueId]
+  const activeClue = clueById[game.activeClueId] ?? clues[0]
+  const isGameStateReady =
+    loadedStorageKey === storageKey && Boolean(activeClue)
   const solvedSet = useMemo(() => new Set(game.solvedIds), [game.solvedIds])
   const displayDate = useMemo(() => formatPuzzleDate(dateKey), [dateKey])
   const displayLongDate = useMemo(
@@ -1258,6 +1260,21 @@ export default function Page() {
             </div>
           </div>
         )}
+      </main>
+    )
+  }
+
+  if (!isGameStateReady) {
+    return (
+      <main className="inline-flex h-svh w-full items-center justify-center bg-[#f6f0d7]">
+        <div
+          className={cn(
+            homeBodyFont.className,
+            "text-center text-[16px] leading-[24px] font-medium text-black/70"
+          )}
+        >
+          Loading puzzle...
+        </div>
       </main>
     )
   }
