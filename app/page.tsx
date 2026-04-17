@@ -133,8 +133,10 @@ export default function Page() {
   const [isPauseOpen, setIsPauseOpen] = useState(false)
   const [isMeaningSheetOpen, setIsMeaningSheetOpen] = useState(false)
   const [isHomeSettingsOpen, setIsHomeSettingsOpen] = useState(false)
+  const [isTestScheduleOpen, setIsTestScheduleOpen] = useState(false)
   const [isHintsTurnedOff, setIsHintsTurnedOff] = useState(false)
   const [isWordBlastTurnedOff, setIsWordBlastTurnedOff] = useState(false)
+  const [logoTapCount, setLogoTapCount] = useState(0)
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null)
   const [completionHistory, setCompletionHistory] = useState<
     Record<string, boolean>
@@ -252,6 +254,11 @@ export default function Page() {
     () => formatPuzzleDateLong(dateKey),
     [dateKey]
   )
+  const sortedSchedule = useMemo(
+    () =>
+      [...schedule].sort((left, right) => left.date.localeCompare(right.date)),
+    [schedule]
+  )
   const hasProgress = useMemo(
     () => hasStartedPuzzle(game, puzzleModel.initialEntries),
     [game, puzzleModel.initialEntries]
@@ -294,10 +301,41 @@ export default function Page() {
     }
   }, [screen])
 
+  useEffect(() => {
+    if (logoTapCount === 0) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setLogoTapCount(0)
+    }, 1200)
+
+    return () => window.clearTimeout(timeout)
+  }, [logoTapCount])
+
   const resetCurrentPuzzle = useCallback(() => {
     setGame(puzzleModel.initialGame)
     setScreen("game")
   }, [puzzleModel.initialGame])
+
+  const handleLogoTap = useCallback(() => {
+    setLogoTapCount((current) => {
+      const nextCount = current + 1
+
+      if (nextCount < 5) {
+        return nextCount
+      }
+
+      setIsTestScheduleOpen(true)
+      return 0
+    })
+  }, [])
+
+  const handlePlayScheduledPuzzle = useCallback((nextDateKey: string) => {
+    setIsTestScheduleOpen(false)
+    setDateKey(nextDateKey)
+    setScreen("game")
+  }, [])
 
   const selectClue = useCallback(
     (clueId: string, preferredIndex?: number) => {
@@ -774,7 +812,7 @@ export default function Page() {
           <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px]">
             <div className="flex w-full flex-col items-center justify-start gap-[16px] self-stretch">
               <div className="flex w-full flex-col items-center justify-start gap-[20px] self-stretch">
-                <HomeMascot />
+                <HomeMascot onTap={handleLogoTap} />
                 <div
                   className={cn(
                     homeTitleFont.className,
@@ -888,6 +926,67 @@ export default function Page() {
                   checked={isWordBlastTurnedOff}
                   onChange={setIsWordBlastTurnedOff}
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isTestScheduleOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]"
+            onClick={() => setIsTestScheduleOpen(false)}
+          >
+            <div
+              className="flex max-h-[80svh] w-full max-w-[360px] flex-col rounded-[20px] bg-white px-[20px] py-[20px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-[20px] leading-[28px] font-semibold text-black">
+                    Scheduled puzzles
+                  </h2>
+                  <p className="mt-1 text-[13px] leading-[20px] text-black/60">
+                    Choose any scheduled puzzle to open it.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsTestScheduleOpen(false)}
+                  className="inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border border-black/20"
+                  aria-label="Close scheduled puzzles"
+                >
+                  <X
+                    className="h-[18px] w-[18px] text-black"
+                    strokeWidth={2.25}
+                  />
+                </button>
+              </div>
+
+              <div className="mt-4 flex max-h-[56svh] flex-col gap-[10px] overflow-y-auto pr-1">
+                {sortedSchedule.map((puzzle) => {
+                  const isCurrentPuzzle = puzzle.date === dateKey
+
+                  return (
+                    <button
+                      key={puzzle.id}
+                      type="button"
+                      onClick={() => handlePlayScheduledPuzzle(puzzle.date)}
+                      className="flex w-full items-center justify-between rounded-[14px] border border-black/10 bg-[#F8F6EF] px-[14px] py-[12px] text-left"
+                    >
+                      <div>
+                        <div className="text-[15px] leading-[22px] font-semibold text-black">
+                          {puzzle.title}
+                        </div>
+                        <div className="text-[12px] leading-[18px] text-black/60">
+                          {formatPuzzleDate(puzzle.date)}
+                        </div>
+                      </div>
+                      <div className="text-[12px] leading-[18px] font-semibold text-black/70">
+                        {isCurrentPuzzle ? "Open" : "Play"}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -1532,17 +1631,24 @@ function PauseToggleRow({
   )
 }
 
-function HomeMascot() {
+function HomeMascot({ onTap }: { onTap: () => void }) {
   return (
-    <img
-      src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
-      alt="Crossword logo"
-      className="h-[100px] w-[100px] shrink-0 object-contain"
-      width={100}
-      height={100}
-      loading="eager"
-      decoding="async"
-    />
+    <button
+      type="button"
+      onClick={onTap}
+      className="rounded-full"
+      aria-label="Crossword logo"
+    >
+      <img
+        src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
+        alt="Crossword logo"
+        className="h-[100px] w-[100px] shrink-0 object-contain"
+        width={100}
+        height={100}
+        loading="eager"
+        decoding="async"
+      />
+    </button>
   )
 }
 
