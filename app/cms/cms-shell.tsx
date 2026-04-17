@@ -40,10 +40,10 @@ export function CmsShell({
           <SidebarContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Crossword CMS">
+                <SidebarMenuButton asChild tooltip="वर्ग पहेली CMS">
                   <Link href="/cms">
                     <Grid3X3 />
-                    <span>Crossword</span>
+                    <span>वर्ग पहेली</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
