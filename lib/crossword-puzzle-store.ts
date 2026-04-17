@@ -17,6 +17,12 @@ type PuzzleRow = {
   puzzle: CrosswordPuzzle | string
 }
 
+type SettingRow = {
+  value: string | null
+}
+
+const FALLBACK_PUZZLE_SETTING_KEY = "fallback_puzzle_id"
+
 let databaseReady: Promise<void> | null = null
 
 export function isDatabaseEnabled() {
@@ -54,7 +60,76 @@ export async function listPuzzleSchedule(): Promise<CrosswordPuzzleSummary[]> {
 
 export async function getPuzzleForDate(dateKey: string) {
   const puzzles = await listAllPuzzles()
-  return getScheduledPuzzle(puzzles, dateKey)
+  const exactMatch = puzzles.find((puzzle) => puzzle.date === dateKey)
+
+  if (exactMatch) {
+    return exactMatch
+  }
+
+  const fallbackPuzzle = await getConfiguredFallbackPuzzle(puzzles)
+  return fallbackPuzzle ?? getScheduledPuzzle(puzzles, dateKey)
+}
+
+export async function getFallbackPuzzleId() {
+  if (!sql) {
+    return null
+  }
+
+  try {
+    await ensureDatabaseReady()
+    const rows = (await sql`
+      SELECT setting_value AS value
+      FROM crossword_settings
+      WHERE setting_key = ${FALLBACK_PUZZLE_SETTING_KEY}
+      LIMIT 1
+    `) as SettingRow[]
+
+    const value = rows[0]?.value?.trim()
+    return value ? value : null
+  } catch {
+    return null
+  }
+}
+
+export async function setFallbackPuzzleId(puzzleId: string | null) {
+  if (!sql) {
+    throw new Error("DATABASE_NOT_CONFIGURED")
+  }
+
+  await ensureDatabaseReady()
+
+  if (!puzzleId) {
+    await sql`
+      DELETE FROM crossword_settings
+      WHERE setting_key = ${FALLBACK_PUZZLE_SETTING_KEY}
+    `
+
+    return null
+  }
+
+  await sql`
+    INSERT INTO crossword_settings (setting_key, setting_value)
+    VALUES (${FALLBACK_PUZZLE_SETTING_KEY}, ${puzzleId})
+    ON CONFLICT (setting_key)
+    DO UPDATE SET
+      setting_value = EXCLUDED.setting_value,
+      updated_at = NOW()
+  `
+
+  return puzzleId
+}
+
+export async function getConfiguredFallbackPuzzle(puzzles?: CrosswordPuzzle[]) {
+  const [fallbackPuzzleId, allPuzzles] = await Promise.all([
+    getFallbackPuzzleId(),
+    puzzles ? Promise.resolve(puzzles) : listAllPuzzles(),
+  ])
+
+  if (!fallbackPuzzleId) {
+    return null
+  }
+
+  return allPuzzles.find((puzzle) => puzzle.id === fallbackPuzzleId) ?? null
 }
 
 export async function savePuzzle(puzzle: CrosswordPuzzle) {
@@ -112,6 +187,15 @@ async function ensureDatabaseReady() {
         rows INTEGER NOT NULL,
         cols INTEGER NOT NULL,
         puzzle JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS crossword_settings (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )

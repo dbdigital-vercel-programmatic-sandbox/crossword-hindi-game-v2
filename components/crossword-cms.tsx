@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   Calendar,
   CircleDot,
+  Circle,
+  Ellipsis,
   GripVertical,
   LayoutGrid,
   MoreVertical,
@@ -18,6 +20,12 @@ import {
 } from "lucide-react"
 
 import { CrosswordPreview } from "@/components/crossword-preview"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   buildDraftFromManualPlacements,
   deriveWordsFromDraft,
@@ -115,12 +123,17 @@ let nextWordId = 1
 
 export function CrosswordCms({
   initialPuzzles,
+  initialFallbackPuzzleId,
   databaseConnected,
 }: {
   initialPuzzles: CrosswordPuzzle[]
+  initialFallbackPuzzleId: string | null
   databaseConnected: boolean
 }) {
   const [puzzles, setPuzzles] = useState(sortPuzzles(initialPuzzles))
+  const [fallbackPuzzleId, setFallbackPuzzleId] = useState(
+    initialFallbackPuzzleId
+  )
   const [screen, setScreen] = useState<CmsScreen>("list")
   const [session, setSession] = useState<PuzzleSession>(() =>
     createEmptySession()
@@ -148,6 +161,9 @@ export function CrosswordCms({
   const [suggestionEngine, setSuggestionEngine] = useState<"dictionary" | "ai">(
     "dictionary"
   )
+  const [fallbackActionPuzzleId, setFallbackActionPuzzleId] = useState<
+    string | null
+  >(null)
 
   const boundaryOffset = useMemo(
     () => getBoundaryOffset(session.gridSize),
@@ -822,6 +838,47 @@ export function CrosswordCms({
     }))
   }
 
+  async function updateFallbackPuzzle(puzzle: CrosswordPuzzle | null) {
+    if (!databaseConnected) {
+      setError("Connect the database before updating the fallback puzzle.")
+      return
+    }
+
+    setFallbackActionPuzzleId(puzzle?.id ?? "__clear__")
+    setError("")
+
+    try {
+      const response = await fetch("/api/cms/puzzles/fallback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ puzzleId: puzzle?.id ?? null }),
+      })
+      const data = (await response.json()) as {
+        fallbackPuzzleId?: string | null
+        error?: string
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unable to update the fallback puzzle.")
+      }
+
+      setFallbackPuzzleId(data.fallbackPuzzleId ?? null)
+      setNotice(
+        puzzle
+          ? `${puzzle.title} is now the fallback puzzle.`
+          : "Fallback puzzle removed. Legacy fallback rules will be used instead."
+      )
+    } catch (fallbackError) {
+      setError(
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : "Unable to update the fallback puzzle."
+      )
+    } finally {
+      setFallbackActionPuzzleId(null)
+    }
+  }
+
   async function handlePublish() {
     if (!databaseConnected) {
       setError("Connect the database before publishing.")
@@ -911,8 +968,13 @@ export function CrosswordCms({
         {screen === "list" ? (
           <ProjectListing
             puzzles={puzzles}
+            fallbackPuzzleId={fallbackPuzzleId}
+            fallbackActionPuzzleId={fallbackActionPuzzleId}
+            databaseConnected={databaseConnected}
             onCreateNew={handleCreateNew}
             onOpenPuzzle={handleOpenPuzzle}
+            onSetFallbackPuzzle={updateFallbackPuzzle}
+            onRemoveFallbackPuzzle={() => updateFallbackPuzzle(null)}
           />
         ) : null}
 
@@ -1008,12 +1070,22 @@ export function CrosswordCms({
 
 function ProjectListing({
   puzzles,
+  fallbackPuzzleId,
+  fallbackActionPuzzleId,
+  databaseConnected,
   onCreateNew,
   onOpenPuzzle,
+  onSetFallbackPuzzle,
+  onRemoveFallbackPuzzle,
 }: {
   puzzles: CrosswordPuzzle[]
+  fallbackPuzzleId: string | null
+  fallbackActionPuzzleId: string | null
+  databaseConnected: boolean
   onCreateNew: () => void
   onOpenPuzzle: (puzzle: CrosswordPuzzle) => void
+  onSetFallbackPuzzle: (puzzle: CrosswordPuzzle) => void
+  onRemoveFallbackPuzzle: () => void
 }) {
   const [searchQuery, setSearchQuery] = useState("")
   const [dateFilter, setDateFilter] = useState("")
@@ -1110,65 +1182,131 @@ function ProjectListing({
                   const themeLabel = puzzle.theme?.trim() || "General"
                   const difficulty = normalizeDifficulty(puzzle.difficulty)
                   const statusTone = getStatusTone(puzzle.date)
+                  const isFallback = fallbackPuzzleId === puzzle.id
+                  const isFallbackActionPending =
+                    fallbackActionPuzzleId === puzzle.id ||
+                    (isFallback && fallbackActionPuzzleId === "__clear__")
 
                   return (
-                    <button
+                    <div
                       key={puzzle.id}
-                      type="button"
-                      onClick={() => onOpenPuzzle(puzzle)}
-                      className="grid w-full grid-cols-[44px_minmax(240px,1.8fr)_140px_120px_120px_140px_120px_56px] items-center gap-4 rounded-[24px] border border-transparent px-3 py-3 text-left transition hover:border-[#ddd6ca] hover:bg-[#fcfaf7]"
+                      className="grid grid-cols-[44px_minmax(240px,1.8fr)_140px_120px_120px_140px_120px_56px] items-center gap-4 rounded-[24px] border border-transparent px-3 py-3 transition hover:border-[#ddd6ca] hover:bg-[#fcfaf7]"
                     >
                       <div className="flex justify-center">
-                        <span className="h-5 w-5 rounded-md border border-[#d3cdc1] bg-white" />
-                      </div>
-
-                      <div className="flex min-w-0 items-center gap-4">
-                        <div
-                          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold ${getPuzzleIconTone(
-                            index
-                          )}`}
+                        <span
+                          className={`flex h-5 w-5 items-center justify-center rounded-md border ${
+                            isFallback
+                              ? "border-[#7e60ad] bg-[#f3ecff] text-[#7e60ad]"
+                              : "border-[#d3cdc1] bg-white text-transparent"
+                          }`}
                         >
-                          {getPuzzleMonogram(themeLabel, puzzle.title)}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate text-[15px] font-semibold text-[#253126]">
-                            {puzzle.title}
-                          </div>
-                          <div className="mt-1 truncate text-sm text-[#6b7369]">
-                            {themeLabel}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="text-sm font-medium text-[#4d594d]">
-                        {formatDisplayDate(puzzle.date)}
-                      </div>
-
-                      <div className="text-sm font-medium text-[#4d594d]">
-                        {puzzle.rows}x{puzzle.cols}
-                      </div>
-
-                      <div className="text-sm font-medium text-[#4d594d]">
-                        {puzzle.clues.length}
-                      </div>
-
-                      <div>
-                        <span className={getStatusBadgeClass(statusTone)}>
-                          {statusTone.label}
+                          <Circle className="h-2.5 w-2.5 fill-current" />
                         </span>
                       </div>
 
-                      <div>
-                        <span className={getDifficultyBadgeClass(difficulty)}>
-                          <CircleDot className="h-3.5 w-3.5 fill-current" />
-                          {capitalize(difficulty)}
-                        </span>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onOpenPuzzle(puzzle)}
+                        className="contents text-left"
+                      >
+                        <div className="flex min-w-0 items-center gap-4">
+                          <div
+                            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold ${getPuzzleIconTone(
+                              index
+                            )}`}
+                          >
+                            {getPuzzleMonogram(themeLabel, puzzle.title)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <div className="truncate text-[15px] font-semibold text-[#253126]">
+                                {puzzle.title}
+                              </div>
+                              {isFallback ? (
+                                <span className="inline-flex shrink-0 items-center rounded-full bg-[#f3ecff] px-2.5 py-1 text-[11px] font-semibold text-[#7e60ad]">
+                                  Fallback
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 truncate text-sm text-[#6b7369]">
+                              {themeLabel}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-sm font-medium text-[#4d594d]">
+                          {formatDisplayDate(puzzle.date)}
+                        </div>
+
+                        <div className="text-sm font-medium text-[#4d594d]">
+                          {puzzle.rows}x{puzzle.cols}
+                        </div>
+
+                        <div className="text-sm font-medium text-[#4d594d]">
+                          {puzzle.clues.length}
+                        </div>
+
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={getStatusBadgeClass(statusTone)}>
+                              {statusTone.label}
+                            </span>
+                            {isFallback ? (
+                              <span className={getFallbackBadgeClass()}>
+                                Fallback
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className={getDifficultyBadgeClass(difficulty)}>
+                            <CircleDot className="h-3.5 w-3.5 fill-current" />
+                            {capitalize(difficulty)}
+                          </span>
+                        </div>
+                      </button>
 
                       <div className="flex justify-center text-[#8a8f84]">
-                        <MoreVertical className="h-4 w-4" />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label={`Open actions for ${puzzle.title}`}
+                              disabled={isFallbackActionPending}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent transition hover:border-[#ddd6ca] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isFallbackActionPending ? (
+                                <Ellipsis className="h-4 w-4 animate-pulse" />
+                              ) : (
+                                <MoreVertical className="h-4 w-4" />
+                              )}
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-44">
+                            {isFallback ? (
+                              <DropdownMenuItem
+                                disabled={
+                                  !databaseConnected || isFallbackActionPending
+                                }
+                                onClick={() => onRemoveFallbackPuzzle()}
+                              >
+                                Remove fallback
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                disabled={
+                                  !databaseConnected || isFallbackActionPending
+                                }
+                                onClick={() => onSetFallbackPuzzle(puzzle)}
+                              >
+                                Set as fallback
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
-                    </button>
+                    </div>
                   )
                 })
               )}
@@ -2362,6 +2500,10 @@ function getStatusBadgeClass(status: ReturnType<typeof getStatusTone>) {
   }
 
   return "inline-flex items-center rounded-full bg-[#eef7ff] px-3 py-1 text-xs font-semibold text-[#4d83b6]"
+}
+
+function getFallbackBadgeClass() {
+  return "inline-flex items-center rounded-full bg-[#f3ecff] px-3 py-1 text-xs font-semibold text-[#7e60ad]"
 }
 
 function getDifficultyBadgeClass(difficulty: Difficulty) {
