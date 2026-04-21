@@ -1,10 +1,24 @@
 "use client"
 
 import { Noto_Sans } from "next/font/google"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnimationEvent,
+} from "react"
 import { ChevronLeft, ChevronRight, X } from "lucide-react"
 
 import { crosswordLevels } from "@/data/crossword-levels"
+import {
+  DEFAULT_CROSSWORD_LOCALE,
+  getCrosswordCopy,
+  getPreferredCrosswordLocale,
+  type CrosswordLocale,
+  type CrosswordCopy,
+} from "@/lib/i18n/crossword"
 import {
   type ClueDefinition,
   type CrosswordPuzzle,
@@ -16,11 +30,12 @@ import {
 import { cn } from "@/lib/utils"
 
 const gameFont = Noto_Sans({
-  subsets: ["latin"],
+  subsets: ["latin", "devanagari"],
   weight: ["400", "600", "700"],
 })
 const homeTitleFont = gameFont
 const homeBodyFont = gameFont
+const SCREEN_TRANSITION_FALLBACK_MS = 900
 
 type LockSource = "given" | "revealed" | "solved"
 type FeedbackType = "wrong" | "correct"
@@ -63,10 +78,34 @@ type FeedbackState = {
   stamp: number
 }
 
+type CelebrationState = {
+  clueId: string
+  solvedCellKeys: string[]
+  blastCellKeys: string[]
+  stamp: number
+}
+
 type GameSettings = {
   isHintsTurnedOff: boolean
   isWordBlastTurnedOff: boolean
 }
+
+type ScreenTransitionState = {
+  from: Screen
+  to: Screen
+  phase: "prepare" | "active"
+}
+
+type ScreenMotionState = "static" | "enter" | "exit"
+
+type ScreenTransitionPair =
+  | "idle"
+  | "home-game"
+  | "game-home"
+  | "game-summary"
+  | "summary-home"
+  | "home-summary"
+  | "summary-game"
 
 type PuzzleModel = {
   GRID_ROWS: number
@@ -110,6 +149,9 @@ const dlsAssets = {
 } as const
 
 export default function Page() {
+  const [locale, setLocale] = useState<CrosswordLocale>(
+    DEFAULT_CROSSWORD_LOCALE
+  )
   const [dateKey, setDateKey] = useState(() => getLocalDateKey())
   const [scheduledPuzzle, setScheduledPuzzle] = useState<CrosswordPuzzle>(() =>
     getScheduledPuzzle(crosswordLevels, dateKey)
@@ -143,14 +185,29 @@ export default function Page() {
   const [isHintButtonHighlighted, setIsHintButtonHighlighted] = useState(false)
   const [logoTapCount, setLogoTapCount] = useState(0)
   const [loadedStorageKey, setLoadedStorageKey] = useState<string | null>(null)
+  const [celebration, setCelebration] = useState<CelebrationState | null>(null)
   const [completionHistory, setCompletionHistory] = useState<
     Record<string, boolean>
   >({})
   const [compactMode, setCompactMode] = useState<CompactMode>("normal")
+  const [settledScreen, setSettledScreen] = useState<Screen>("home")
+  const [screenTransition, setScreenTransition] =
+    useState<ScreenTransitionState | null>(null)
+  const screenTransitionTimerRef = useRef<number | null>(null)
+  const screenTransitionFrameRef = useRef<number | null>(null)
   const storageKey = useMemo(
     () => getPuzzleStorageKey(scheduledPuzzle.id),
     [scheduledPuzzle.id]
   )
+  const copy = useMemo(() => getCrosswordCopy(locale), [locale])
+
+  useEffect(() => {
+    setLocale(getPreferredCrosswordLocale())
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.lang = copy.lang
+  }, [copy.lang])
 
   useEffect(() => {
     let isCancelled = false
@@ -216,6 +273,7 @@ export default function Page() {
   useEffect(() => {
     const restoredGame = loadStoredGame(storageKey, puzzleModel)
     setGame(restoredGame ?? puzzleModel.initialGame)
+    setCelebration(null)
     setLoadedStorageKey(storageKey)
   }, [puzzleModel, storageKey])
 
@@ -271,10 +329,13 @@ export default function Page() {
   const isGameStateReady =
     loadedStorageKey === storageKey && Boolean(activeClue)
   const solvedSet = useMemo(() => new Set(game.solvedIds), [game.solvedIds])
-  const displayDate = useMemo(() => formatPuzzleDate(dateKey), [dateKey])
+  const displayDate = useMemo(
+    () => formatPuzzleDate(dateKey, copy.intlLocale),
+    [copy.intlLocale, dateKey]
+  )
   const displayLongDate = useMemo(
-    () => formatPuzzleDateLong(dateKey),
-    [dateKey]
+    () => formatPuzzleDateLong(dateKey, copy.intlLocale),
+    [copy.intlLocale, dateKey]
   )
   const sortedSchedule = useMemo(
     () =>
@@ -291,12 +352,22 @@ export default function Page() {
     [game.elapsedSeconds]
   )
   const weeklyStreakDays = useMemo(
-    () => buildWeeklyStreakDays(dateKey, completionHistory, isPuzzleComplete),
-    [completionHistory, dateKey, isPuzzleComplete]
+    () =>
+      buildWeeklyStreakDays(
+        dateKey,
+        completionHistory,
+        isPuzzleComplete,
+        copy.weekdayLabels
+      ),
+    [completionHistory, copy.weekdayLabels, dateKey, isPuzzleComplete]
   )
   const nextChallengeDate = useMemo(
-    () => formatNextChallengeDate(getNextChallengeDateKey(dateKey, schedule)),
-    [dateKey, schedule]
+    () =>
+      formatNextChallengeDate(
+        getNextChallengeDateKey(dateKey, schedule),
+        copy.intlLocale
+      ),
+    [copy.intlLocale, dateKey, schedule]
   )
   const todaysWords = useMemo(
     () =>
@@ -310,11 +381,11 @@ export default function Page() {
         })
         .map((clue) => ({
           id: clue.id,
-          label: `${clue.number}${clue.direction === "across" ? "A" : "D"}`,
+          label: copy.formatClueLabel(clue.number, clue.direction),
           answer: clue.answer,
-          meaning: normalizeMeaning(clue.meaning, clue.answer),
+          meaning: normalizeMeaning(clue.meaning, clue.answer, copy),
         })),
-    [clues]
+    [clues, copy]
   )
 
   useEffect(() => {
@@ -322,6 +393,50 @@ export default function Page() {
       setIsMeaningSheetOpen(false)
     }
   }, [screen])
+
+  useEffect(() => {
+    if (screen === settledScreen) {
+      setScreenTransition(null)
+      return
+    }
+
+    if (screenTransitionTimerRef.current !== null) {
+      window.clearTimeout(screenTransitionTimerRef.current)
+    }
+
+    if (screenTransitionFrameRef.current !== null) {
+      window.cancelAnimationFrame(screenTransitionFrameRef.current)
+    }
+
+    setScreenTransition({ from: settledScreen, to: screen, phase: "prepare" })
+
+    screenTransitionFrameRef.current = window.requestAnimationFrame(() => {
+      setScreenTransition((current) =>
+        current && current.to === screen
+          ? { ...current, phase: "active" }
+          : current
+      )
+    })
+
+    screenTransitionTimerRef.current = window.setTimeout(() => {
+      setSettledScreen(screen)
+      setScreenTransition(null)
+      screenTransitionTimerRef.current = null
+      screenTransitionFrameRef.current = null
+    }, SCREEN_TRANSITION_FALLBACK_MS)
+
+    return () => {
+      if (screenTransitionTimerRef.current !== null) {
+        window.clearTimeout(screenTransitionTimerRef.current)
+        screenTransitionTimerRef.current = null
+      }
+
+      if (screenTransitionFrameRef.current !== null) {
+        window.cancelAnimationFrame(screenTransitionFrameRef.current)
+        screenTransitionFrameRef.current = null
+      }
+    }
+  }, [screen, settledScreen])
 
   useEffect(() => {
     if (logoTapCount === 0) {
@@ -338,6 +453,7 @@ export default function Page() {
   const resetPuzzleState = useCallback(
     (nextScreen: Screen) => {
       setGame(puzzleModel.initialGame)
+      setCelebration(null)
       setHintPromptClueId(null)
       setHintNudgeVersion((current) => current + 1)
       setScreen(nextScreen)
@@ -377,6 +493,36 @@ export default function Page() {
     setDateKey(nextDateKey)
     setScreen("game")
   }, [])
+
+  const handleTransitionAnimationEnd = useCallback(
+    (event: AnimationEvent<HTMLDivElement>) => {
+      if (!screenTransition || event.animationName !== "screen-slot-enter") {
+        return
+      }
+
+      const target = event.target
+      if (
+        !(target instanceof HTMLElement) ||
+        target.dataset.screenAnchor !== "true"
+      ) {
+        return
+      }
+
+      if (screenTransitionTimerRef.current !== null) {
+        window.clearTimeout(screenTransitionTimerRef.current)
+        screenTransitionTimerRef.current = null
+      }
+
+      if (screenTransitionFrameRef.current !== null) {
+        window.cancelAnimationFrame(screenTransitionFrameRef.current)
+        screenTransitionFrameRef.current = null
+      }
+
+      setSettledScreen(screenTransition.to)
+      setScreenTransition(null)
+    },
+    [screenTransition]
+  )
 
   const selectClue = useCallback(
     (clueId: string, preferredIndex?: number) => {
@@ -420,6 +566,8 @@ export default function Page() {
   const handleLetter = useCallback(
     (letter: string) => {
       resetHintHighlightTimer()
+      let nextCelebration: CelebrationState | null = null
+
       setGame((current) => {
         const clue = clueById[current.activeClueId]
         if (
@@ -472,6 +620,7 @@ export default function Page() {
             ? {
                 entries: nextEntries,
                 lockSources: frozenLocks,
+                revealedCellKeys: [],
               }
             : revealLetters(
                 clues,
@@ -495,6 +644,13 @@ export default function Page() {
             clueId: clue.id,
             type: "correct",
             stamp: Date.now(),
+          }
+
+          nextCelebration = {
+            clueId: clue.id,
+            solvedCellKeys: clue.cells.map((cell) => cell.key),
+            blastCellKeys: revealOutcome.revealedCellKeys,
+            stamp: nextFeedback.stamp,
           }
 
           nextState = {
@@ -551,6 +707,10 @@ export default function Page() {
               : incorrectIndex,
         }
       })
+
+      if (nextCelebration) {
+        setCelebration(nextCelebration)
+      }
     },
     [
       cellData,
@@ -725,6 +885,20 @@ export default function Page() {
 
     return () => window.clearTimeout(timeout)
   }, [clueById, game.feedback])
+
+  useEffect(() => {
+    if (!celebration) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => {
+      setCelebration((current) =>
+        current?.stamp === celebration.stamp ? null : current
+      )
+    }, 820)
+
+    return () => window.clearTimeout(timeout)
+  }, [celebration])
 
   useEffect(() => {
     if (game.feedback?.type !== "wrong") {
@@ -910,552 +1084,574 @@ export default function Page() {
             "text-center text-[16px] leading-[24px] font-medium text-black/70"
           )}
         >
-          Loading today&apos;s puzzle...
+          {copy.loadingTodayPuzzle}
         </div>
       </main>
     )
   }
 
-  if (screen === "home") {
-    return (
-      <main className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#f6f0d7]">
-        <div className="flex h-full flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#f6f0d7] px-[30px] py-[100px]">
-          <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px]">
-            <div className="flex w-full flex-col items-center justify-start gap-[16px] self-stretch">
-              <div className="flex w-full flex-col items-center justify-start gap-[20px] self-stretch">
-                <HomeMascot onTap={handleLogoTap} />
-                <div
-                  className={cn(
-                    homeTitleFont.className,
-                    "flex w-full flex-col justify-center self-stretch text-center text-[28px] font-extrabold text-black"
-                  )}
-                >
-                  वर्ग पहेली
-                </div>
-              </div>
-
-              <div className="flex w-full flex-col items-start justify-start gap-[10px] self-stretch">
-                <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "flex w-full flex-col justify-center self-stretch text-center text-[18px] leading-[26px] font-normal text-black"
-                  )}
-                >
-                  Connect the dots, fill the grid
-                </div>
-                <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "flex w-full flex-col justify-center self-stretch text-center text-[14px] leading-[22px] font-semibold text-black"
-                  )}
-                >
-                  {displayLongDate}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex w-full flex-col gap-[8px]">
-              <button
-                type="button"
-                onClick={() => setScreen(isPuzzleComplete ? "summary" : "game")}
-                className="inline-flex h-[56px] w-full items-center justify-center gap-[10px] self-stretch rounded-[12px] bg-black px-[73px] py-[12px]"
+  const renderScreen = (
+    screenToRender: Screen,
+    motionState: ScreenMotionState = "static",
+    transitionPair: ScreenTransitionPair = "idle"
+  ) => {
+    if (screenToRender === "home") {
+      return (
+        <main
+          data-screen={screenToRender}
+          data-screen-motion={motionState}
+          data-transition-pair={transitionPair}
+          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#f6f0d7]"
+        >
+          <div className="flex h-full flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#f6f0d7] px-[30px] py-[100px]">
+            <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px]">
+              <div
+                data-screen-slot="hero"
+                className="flex w-full flex-col items-center justify-start gap-[16px] self-stretch"
               >
-                <span
-                  className={cn(
-                    homeBodyFont.className,
-                    "flex flex-col justify-center text-center text-[20px] leading-[30px] font-semibold text-white"
-                  )}
-                >
-                  {isPuzzleComplete
-                    ? "View Summary"
-                    : hasProgress
-                      ? "Continue Game"
-                      : "Start Game"}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsHomeSettingsOpen(true)}
-                className={cn(
-                  homeBodyFont.className,
-                  "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-black bg-transparent px-[14px] text-[16px] leading-[24px] font-semibold text-black"
-                )}
-              >
-                Settings
-              </button>
-
-              {isPuzzleComplete && (
-                <button
-                  type="button"
-                  onClick={resetPuzzleFromHome}
-                  className={cn(
-                    homeBodyFont.className,
-                    "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-[#F05C21] bg-[#FFF3ED] px-[14px] text-[16px] leading-[24px] font-semibold text-[#B84212]"
-                  )}
-                >
-                  Reset Game
-                </button>
-              )}
-            </div>
-
-            {(hasProgress || isPuzzleComplete) && (
-              <p
-                className={cn(
-                  homeBodyFont.className,
-                  "text-center text-[12px] leading-[18px] font-medium text-black/60"
-                )}
-              >
-                {isPuzzleComplete
-                  ? `Finished in ${timerLabel}`
-                  : `${game.solvedIds.length}/${clues.length} words solved`}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {isHomeSettingsOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]"
-            onClick={() => setIsHomeSettingsOpen(false)}
-          >
-            <div
-              className="flex w-full max-w-[320px] flex-col items-center rounded-[20px] bg-white px-[24px] py-[24px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex w-full items-center justify-between">
-                <h2 className="text-[22px] leading-[32px] font-semibold text-black">
-                  Settings
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setIsHomeSettingsOpen(false)}
-                  className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
-                  aria-label="Close settings"
-                >
-                  <X
-                    className="h-[18px] w-[18px] text-black"
-                    strokeWidth={2.25}
-                  />
-                </button>
-              </div>
-              <div className="mt-4 flex w-full flex-col gap-[10px]">
-                <PauseToggleRow
-                  label="Turn off hints"
-                  checked={isHintsTurnedOff}
-                  onChange={setIsHintsTurnedOff}
-                />
-                <PauseToggleRow
-                  label="Turn off word blast"
-                  checked={isWordBlastTurnedOff}
-                  onChange={setIsWordBlastTurnedOff}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {isTestScheduleOpen && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]"
-            onClick={() => setIsTestScheduleOpen(false)}
-          >
-            <div
-              className="flex max-h-[80svh] w-full max-w-[360px] flex-col rounded-[20px] bg-white px-[20px] py-[20px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-[20px] leading-[28px] font-semibold text-black">
-                    Scheduled puzzles
-                  </h2>
-                  <p className="mt-1 text-[13px] leading-[20px] text-black/60">
-                    Choose any scheduled puzzle to open it.
-                  </p>
+                <div className="flex w-full flex-col items-center justify-start gap-[20px] self-stretch">
+                  <HomeMascot onTap={handleLogoTap} label={copy.mascotLabel} />
+                  <div
+                    className={cn(
+                      homeTitleFont.className,
+                      "flex w-full flex-col justify-center self-stretch text-center text-[28px] font-extrabold text-black"
+                    )}
+                  >
+                    {copy.appName}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsTestScheduleOpen(false)}
-                  className="inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border border-black/20"
-                  aria-label="Close scheduled puzzles"
-                >
-                  <X
-                    className="h-[18px] w-[18px] text-black"
-                    strokeWidth={2.25}
-                  />
-                </button>
-              </div>
 
-              <div className="mt-4 flex max-h-[56svh] flex-col gap-[10px] overflow-y-auto pr-1">
-                {sortedSchedule.map((puzzle) => {
-                  const isCurrentPuzzle = puzzle.date === dateKey
-
-                  return (
-                    <button
-                      key={puzzle.id}
-                      type="button"
-                      onClick={() => handlePlayScheduledPuzzle(puzzle.date)}
-                      className="flex w-full items-center justify-between rounded-[14px] border border-black/10 bg-[#F8F6EF] px-[14px] py-[12px] text-left"
-                    >
-                      <div>
-                        <div className="text-[15px] leading-[22px] font-semibold text-black">
-                          {puzzle.title}
-                        </div>
-                        <div className="text-[12px] leading-[18px] text-black/60">
-                          {formatPuzzleDate(puzzle.date)}
-                        </div>
-                      </div>
-                      <div className="text-[12px] leading-[18px] font-semibold text-black/70">
-                        {isCurrentPuzzle ? "Open" : "Play"}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    )
-  }
-
-  if (screen === "summary") {
-    return (
-      <main className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]">
-        <div className="mx-auto flex h-full w-full max-w-[390px] flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#F6F0D7] px-[16px] py-[100px]">
-          <div className="inline-flex w-full flex-1 flex-col items-center justify-start gap-[18px]">
-            <div className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch">
-              <SummaryCelebrationIcon />
-              <div className="flex w-full flex-col items-center justify-start gap-[4px] self-stretch">
                 <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "w-full text-center text-[24px] leading-[36px] font-extrabold text-black"
-                  )}
+                  data-screen-slot="support"
+                  className="flex w-full flex-col items-start justify-start gap-[10px] self-stretch"
                 >
-                  Congratulations!
-                </div>
-                <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "w-full text-center text-[16px] leading-[24px] font-normal text-black"
-                  )}
-                >
-                  You have completed the challenge
-                </div>
-              </div>
-            </div>
-
-            <div className="flex w-full flex-col items-start justify-start gap-[14px] self-stretch">
-              <div className="inline-flex w-full items-center justify-between self-stretch rounded-[5px] bg-white p-[10px]">
-                <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "text-[18px] leading-[26px] font-extrabold text-black"
-                  )}
-                >
-                  Total Time
-                </div>
-                <div className="flex items-center justify-start gap-[4px]">
-                  <img
-                    src={dlsAssets.timer}
-                    alt="Timer"
-                    className="h-[24px] w-[24px]"
-                    width={24}
-                    height={24}
-                    loading="lazy"
-                    decoding="async"
-                  />
                   <div
                     className={cn(
                       homeBodyFont.className,
-                      "text-right text-[20px] leading-[26px] font-extrabold text-[#F05C21]"
+                      "flex w-full flex-col justify-center self-stretch text-center text-[18px] leading-[26px] font-normal text-black"
                     )}
                   >
-                    {timerLabel.replace(/^0/, "")}
+                    {copy.tagline}
+                  </div>
+                  <div
+                    className={cn(
+                      homeBodyFont.className,
+                      "flex w-full flex-col justify-center self-stretch text-center text-[14px] leading-[22px] font-semibold text-black"
+                    )}
+                  >
+                    {displayLongDate}
                   </div>
                 </div>
               </div>
 
-              <div className="inline-flex w-full items-center justify-between self-stretch rounded-[5px] bg-white p-[10px]">
-                <div
-                  className={cn(
-                    homeBodyFont.className,
-                    "text-[18px] leading-[26px] font-extrabold text-black"
-                  )}
-                >
-                  View Todays Words
-                </div>
+              <div
+                data-screen-slot="actions"
+                className="flex w-full flex-col gap-[8px]"
+              >
                 <button
                   type="button"
-                  onClick={() => setIsMeaningSheetOpen(true)}
+                  onClick={() =>
+                    setScreen(isPuzzleComplete ? "summary" : "game")
+                  }
+                  className="inline-flex h-[56px] w-full items-center justify-center gap-[10px] self-stretch rounded-[12px] bg-black px-[73px] py-[12px]"
+                >
+                  <span
+                    className={cn(
+                      homeBodyFont.className,
+                      "flex flex-col justify-center text-center text-[20px] leading-[30px] font-semibold text-white"
+                    )}
+                  >
+                    {isPuzzleComplete
+                      ? copy.viewResults
+                      : hasProgress
+                        ? copy.continueGame
+                        : copy.startGame}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsHomeSettingsOpen(true)}
                   className={cn(
                     homeBodyFont.className,
-                    "inline-flex h-[36px] items-center justify-center rounded-[8px] border border-black px-[12px] text-[14px] leading-[20px] font-bold text-black"
+                    "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-black bg-transparent px-[14px] text-[16px] leading-[24px] font-semibold text-black"
                   )}
                 >
-                  View Meaning
+                  {copy.settings}
                 </button>
+
+                {isPuzzleComplete && (
+                  <button
+                    type="button"
+                    onClick={resetPuzzleFromHome}
+                    className={cn(
+                      homeBodyFont.className,
+                      "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-[#F05C21] bg-[#FFF3ED] px-[14px] text-[16px] leading-[24px] font-semibold text-[#B84212]"
+                    )}
+                  >
+                    {copy.resetGame}
+                  </button>
+                )}
               </div>
 
-              <div className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch rounded-[12px] bg-white px-[10px] py-[12px]">
-                <div className="inline-flex w-full items-center justify-between self-stretch overflow-hidden">
+              {(hasProgress || isPuzzleComplete) && (
+                <p
+                  data-screen-slot="meta"
+                  data-screen-anchor="true"
+                  className={cn(
+                    homeBodyFont.className,
+                    "text-center text-[12px] leading-[18px] font-medium text-black/60"
+                  )}
+                >
+                  {isPuzzleComplete
+                    ? copy.formatTimeTaken(timerLabel)
+                    : copy.formatWordsSolved(
+                        game.solvedIds.length,
+                        clues.length
+                      )}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {isHomeSettingsOpen && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]"
+              onClick={() => setIsHomeSettingsOpen(false)}
+            >
+              <div
+                className="flex w-full max-w-[320px] flex-col items-center rounded-[20px] bg-white px-[24px] py-[24px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex w-full items-center justify-between">
+                  <h2 className="text-[22px] leading-[32px] font-semibold text-black">
+                    {copy.settings}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsHomeSettingsOpen(false)}
+                    className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
+                    aria-label={copy.closeSettings}
+                  >
+                    <X
+                      className="h-[18px] w-[18px] text-black"
+                      strokeWidth={2.25}
+                    />
+                  </button>
+                </div>
+                <div className="mt-4 flex w-full flex-col gap-[10px]">
+                  <PauseToggleRow
+                    label={copy.hintToggle}
+                    checked={isHintsTurnedOff}
+                    onChange={setIsHintsTurnedOff}
+                  />
+                  <PauseToggleRow
+                    label={copy.bonusWordsToggle}
+                    description={copy.bonusWordsHint}
+                    checked={isWordBlastTurnedOff}
+                    onChange={setIsWordBlastTurnedOff}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isTestScheduleOpen && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]"
+              onClick={() => setIsTestScheduleOpen(false)}
+            >
+              <div
+                className="flex max-h-[80svh] w-full max-w-[360px] flex-col rounded-[20px] bg-white px-[20px] py-[20px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-[20px] leading-[28px] font-semibold text-black">
+                      {copy.scheduledPuzzles}
+                    </h2>
+                    <p className="mt-1 text-[13px] leading-[20px] text-black/60">
+                      {copy.scheduledPuzzlesDescription}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsTestScheduleOpen(false)}
+                    className="inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border border-black/20"
+                    aria-label={copy.closeScheduledPuzzles}
+                  >
+                    <X
+                      className="h-[18px] w-[18px] text-black"
+                      strokeWidth={2.25}
+                    />
+                  </button>
+                </div>
+
+                <div className="mt-4 flex max-h-[56svh] flex-col gap-[10px] overflow-y-auto pr-1">
+                  {sortedSchedule.map((puzzle) => {
+                    const isCurrentPuzzle = puzzle.date === dateKey
+
+                    return (
+                      <button
+                        key={puzzle.id}
+                        type="button"
+                        onClick={() => handlePlayScheduledPuzzle(puzzle.date)}
+                        className="flex w-full items-center justify-between rounded-[14px] border border-black/10 bg-[#F8F6EF] px-[14px] py-[12px] text-left"
+                      >
+                        <div>
+                          <div className="text-[15px] leading-[22px] font-semibold text-black">
+                            {puzzle.title}
+                          </div>
+                          <div className="text-[12px] leading-[18px] text-black/60">
+                            {formatPuzzleDate(puzzle.date, copy.intlLocale)}
+                          </div>
+                        </div>
+                        <div className="text-[12px] leading-[18px] font-semibold text-black/70">
+                          {isCurrentPuzzle ? copy.openPuzzle : copy.playPuzzle}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      )
+    }
+
+    if (screenToRender === "summary") {
+      return (
+        <main
+          data-screen={screenToRender}
+          data-screen-motion={motionState}
+          data-transition-pair={transitionPair}
+          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]"
+        >
+          <div className="mx-auto flex h-full w-full max-w-[390px] flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#F6F0D7] px-[16px] py-[100px]">
+            <div className="inline-flex w-full flex-1 flex-col items-center justify-start gap-[18px]">
+              <div
+                data-screen-slot="hero"
+                className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch"
+              >
+                <SummaryCelebrationIcon alt={copy.trophyAlt} />
+                <div className="flex w-full flex-col items-center justify-start gap-[4px] self-stretch">
+                  <div
+                    className={cn(
+                      homeBodyFont.className,
+                      "w-full text-center text-[24px] leading-[36px] font-extrabold text-black"
+                    )}
+                  >
+                    {copy.summaryTitle}
+                  </div>
+                  <div
+                    className={cn(
+                      homeBodyFont.className,
+                      "w-full text-center text-[16px] leading-[24px] font-normal text-black"
+                    )}
+                  >
+                    {copy.summarySubtitle}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                data-screen-slot="board"
+                className="flex w-full flex-col items-start justify-start gap-[14px] self-stretch"
+              >
+                <div className="inline-flex w-full items-center justify-between self-stretch rounded-[5px] bg-white p-[10px]">
                   <div
                     className={cn(
                       homeBodyFont.className,
                       "text-[18px] leading-[26px] font-extrabold text-black"
                     )}
                   >
-                    Weekly Streak
+                    {copy.totalTime}
                   </div>
-                  <FlameBadge />
+                  <div className="flex items-center justify-start gap-[4px]">
+                    <img
+                      src={dlsAssets.timer}
+                      alt={copy.totalTime}
+                      className="h-[24px] w-[24px]"
+                      width={24}
+                      height={24}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <div
+                      className={cn(
+                        homeBodyFont.className,
+                        "text-right text-[20px] leading-[26px] font-extrabold text-[#F05C21]"
+                      )}
+                    >
+                      {timerLabel.replace(/^0/, "")}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="inline-flex w-full items-center justify-between self-stretch">
-                  {weeklyStreakDays.map((day: StreakDay) => (
+                <div className="inline-flex w-full items-center justify-between self-stretch rounded-[5px] bg-white p-[10px]">
+                  <div
+                    className={cn(
+                      homeBodyFont.className,
+                      "text-[18px] leading-[26px] font-extrabold text-black"
+                    )}
+                  >
+                    {copy.viewTodaysWords}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsMeaningSheetOpen(true)}
+                    className={cn(
+                      homeBodyFont.className,
+                      "inline-flex h-[36px] items-center justify-center rounded-[8px] border border-black px-[12px] text-[14px] leading-[20px] font-bold text-black"
+                    )}
+                  >
+                    {copy.understandWordMeanings}
+                  </button>
+                </div>
+
+                <div className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch rounded-[12px] bg-white px-[10px] py-[12px]">
+                  <div className="inline-flex w-full items-center justify-between self-stretch overflow-hidden">
                     <div
-                      key={day.label}
-                      className="inline-flex w-[32px] flex-col items-center justify-start"
+                      className={cn(
+                        homeBodyFont.className,
+                        "text-[18px] leading-[26px] font-extrabold text-black"
+                      )}
                     >
-                      <div className="relative flex h-[24px] w-[24px] items-center justify-center">
-                        {day.isToday && day.state === "complete" ? (
-                          <>
+                      {copy.weeklyStreak}
+                    </div>
+                    <FlameBadge alt={copy.streakAlt} />
+                  </div>
+
+                  <div className="inline-flex w-full items-center justify-between self-stretch">
+                    {weeklyStreakDays.map((day: StreakDay) => (
+                      <div
+                        key={day.label}
+                        className="inline-flex w-[32px] flex-col items-center justify-start"
+                      >
+                        <div className="relative flex h-[24px] w-[24px] items-center justify-center">
+                          {day.isToday && day.state === "complete" ? (
+                            <>
+                              <img
+                                src={dlsAssets.ray}
+                                alt={copy.todayAlt}
+                                className="absolute -inset-[8px] h-[40px] w-[40px]"
+                                width={40}
+                                height={40}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <img
+                                src={dlsAssets.tick}
+                                alt={copy.completedAlt}
+                                className="relative z-10 h-[20px] w-[20px]"
+                                width={20}
+                                height={20}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            </>
+                          ) : (
                             <img
-                              src={dlsAssets.ray}
-                              alt="Today"
-                              className="absolute -inset-[8px] h-[40px] w-[40px]"
-                              width={40}
-                              height={40}
-                              loading="lazy"
-                              decoding="async"
-                            />
-                            <img
-                              src={dlsAssets.tick}
-                              alt="Completed"
-                              className="relative z-10 h-[20px] w-[20px]"
+                              src={
+                                day.state === "complete"
+                                  ? dlsAssets.tick
+                                  : day.state === "missed"
+                                    ? dlsAssets.cross
+                                    : dlsAssets.emptyCell
+                              }
+                              alt={copy.formatStreakStateAlt(
+                                day.state,
+                                day.isToday
+                              )}
+                              className="h-[20px] w-[20px]"
                               width={20}
                               height={20}
                               loading="lazy"
                               decoding="async"
                             />
-                          </>
-                        ) : (
-                          <img
-                            src={
-                              day.state === "complete"
-                                ? dlsAssets.tick
-                                : day.state === "missed"
-                                  ? dlsAssets.cross
-                                  : dlsAssets.emptyCell
-                            }
-                            alt={day.state}
-                            className="h-[20px] w-[20px]"
-                            width={20}
-                            height={20}
-                            loading="lazy"
-                            decoding="async"
-                          />
-                        )}
-                      </div>
-                      <div className="inline-flex items-center justify-center gap-[10px] self-stretch p-[4px]">
-                        <div
-                          className={cn(
-                            homeTitleFont.className,
-                            "text-center text-[10px] font-bold uppercase",
-                            day.isToday
-                              ? "text-[#F05C21]"
-                              : day.state === "pending"
-                                ? "text-black/50"
-                                : "text-black"
                           )}
-                        >
-                          {day.label}
                         </div>
+                        <div className="inline-flex items-center justify-center gap-[10px] self-stretch p-[4px]">
+                          <div
+                            className={cn(
+                              homeTitleFont.className,
+                              "text-center text-[10px] font-bold uppercase",
+                              day.isToday
+                                ? "text-[#F05C21]"
+                                : day.state === "pending"
+                                  ? "text-black/50"
+                                  : "text-black"
+                            )}
+                          >
+                            {day.label}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                data-screen-slot="meta"
+                data-screen-anchor="true"
+                className="flex h-[54px] w-full flex-col items-center justify-start self-stretch"
+              >
+                <div
+                  className={cn(
+                    homeBodyFont.className,
+                    "flex-1 self-stretch text-center text-[16px] leading-[24px] font-normal text-black"
+                  )}
+                >
+                  {copy.nextChallenge}
+                </div>
+                <div
+                  className={cn(
+                    homeBodyFont.className,
+                    "flex-1 self-stretch text-center text-[20px] leading-[30px] font-semibold text-black"
+                  )}
+                >
+                  {nextChallengeDate}
+                </div>
+              </div>
+
+              <button
+                data-screen-slot="actions"
+                type="button"
+                onClick={() => setScreen("home")}
+                className="inline-flex h-[44px] w-full items-center justify-center gap-[8px] self-stretch rounded-[12px] border-2 border-black bg-black px-[73px] py-[14px]"
+              >
+                <img
+                  src={dlsAssets.home}
+                  alt={copy.homeIconAlt}
+                  className="h-[24px] w-[24px]"
+                  width={24}
+                  height={24}
+                  loading="lazy"
+                  decoding="async"
+                />
+                <span
+                  className={cn(
+                    homeBodyFont.className,
+                    "text-center text-[16px] leading-[24px] font-bold text-white"
+                  )}
+                >
+                  {copy.homePage}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {isMeaningSheetOpen && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6 backdrop-blur-[2px]"
+              onClick={() => setIsMeaningSheetOpen(false)}
+            >
+              <div
+                className="w-full max-w-[390px] rounded-[16px] bg-white p-[14px] shadow-[0_20px_60px_rgba(0,0,0,0.3)]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-black/10 pb-[10px]">
+                  <h2
+                    className={cn(
+                      homeBodyFont.className,
+                      "text-[18px] leading-[26px] font-extrabold text-black"
+                    )}
+                  >
+                    {copy.todaysWordsSheetTitle}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setIsMeaningSheetOpen(false)}
+                    className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
+                    aria-label={copy.closeMeanings}
+                  >
+                    <X
+                      className="h-[18px] w-[18px] text-black"
+                      strokeWidth={2.25}
+                    />
+                  </button>
+                </div>
+
+                <div className="mt-[12px] max-h-[55svh] space-y-[8px] overflow-y-auto pr-[2px]">
+                  {todaysWords.map((word) => (
+                    <div
+                      key={word.id}
+                      className="rounded-[10px] border border-black/10 bg-[#FFF9E8] p-[10px]"
+                    >
+                      <div
+                        className={cn(
+                          homeBodyFont.className,
+                          "text-[14px] leading-[20px] font-extrabold text-black"
+                        )}
+                      >
+                        {word.label} - {word.answer}
+                      </div>
+                      <div
+                        className={cn(
+                          homeBodyFont.className,
+                          "mt-[4px] text-[13px] leading-[20px] font-normal text-black/80"
+                        )}
+                      >
+                        {word.meaning}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
+          )}
+        </main>
+      )
+    }
 
-            <div className="flex h-[54px] w-full flex-col items-center justify-start self-stretch">
-              <div
-                className={cn(
-                  homeBodyFont.className,
-                  "flex-1 self-stretch text-center text-[16px] leading-[24px] font-normal text-black"
-                )}
-              >
-                Next Challenge
-              </div>
-              <div
-                className={cn(
-                  homeBodyFont.className,
-                  "flex-1 self-stretch text-center text-[20px] leading-[30px] font-semibold text-black"
-                )}
-              >
-                {nextChallengeDate}
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setScreen("home")}
-              className="inline-flex h-[44px] w-full items-center justify-center gap-[8px] self-stretch rounded-[12px] border-2 border-black bg-black px-[73px] py-[14px]"
-            >
-              <img
-                src={dlsAssets.home}
-                alt="Home"
-                className="h-[24px] w-[24px]"
-                width={24}
-                height={24}
-                loading="lazy"
-                decoding="async"
-              />
-              <span
-                className={cn(
-                  homeBodyFont.className,
-                  "text-center text-[16px] leading-[24px] font-bold text-white"
-                )}
-              >
-                Back to Home
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {isMeaningSheetOpen && (
+    if (!isGameStateReady) {
+      return (
+        <main className="inline-flex h-svh w-full items-center justify-center bg-[#f6f0d7]">
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6 backdrop-blur-[2px]"
-            onClick={() => setIsMeaningSheetOpen(false)}
+            className={cn(
+              homeBodyFont.className,
+              "text-center text-[16px] leading-[24px] font-medium text-black/70"
+            )}
           >
-            <div
-              className="w-full max-w-[390px] rounded-[16px] bg-white p-[14px] shadow-[0_20px_60px_rgba(0,0,0,0.3)]"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3 border-b border-black/10 pb-[10px]">
-                <h2
-                  className={cn(
-                    homeBodyFont.className,
-                    "text-[18px] leading-[26px] font-extrabold text-black"
-                  )}
-                >
-                  Todays Words
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setIsMeaningSheetOpen(false)}
-                  className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
-                  aria-label="Close meanings"
-                >
-                  <X
-                    className="h-[18px] w-[18px] text-black"
-                    strokeWidth={2.25}
-                  />
-                </button>
-              </div>
-
-              <div className="mt-[12px] max-h-[55svh] space-y-[8px] overflow-y-auto pr-[2px]">
-                {todaysWords.map((word) => (
-                  <div
-                    key={word.id}
-                    className="rounded-[10px] border border-black/10 bg-[#FFF9E8] p-[10px]"
-                  >
-                    <div
-                      className={cn(
-                        homeBodyFont.className,
-                        "text-[14px] leading-[20px] font-extrabold text-black"
-                      )}
-                    >
-                      {word.label} - {word.answer}
-                    </div>
-                    <div
-                      className={cn(
-                        homeBodyFont.className,
-                        "mt-[4px] text-[13px] leading-[20px] font-normal text-black/80"
-                      )}
-                    >
-                      {word.meaning}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            {copy.loadingPuzzle}
           </div>
-        )}
-      </main>
-    )
-  }
+        </main>
+      )
+    }
 
-  if (!isGameStateReady) {
     return (
-      <main className="inline-flex h-svh w-full items-center justify-center bg-[#f6f0d7]">
-        <div
-          className={cn(
-            homeBodyFont.className,
-            "text-center text-[16px] leading-[24px] font-medium text-black/70"
-          )}
+      <main
+        data-screen={screenToRender}
+        data-screen-motion={motionState}
+        data-transition-pair={transitionPair}
+        className={cn(
+          gameFont.className,
+          "relative flex min-h-[100dvh] w-full flex-col overflow-hidden bg-[#F6F0D7]"
+        )}
+      >
+        <header
+          data-screen-slot="hero"
+          className="z-30 w-full shrink-0 bg-transparent"
         >
-          Loading puzzle...
-        </div>
-      </main>
-    )
-  }
-
-  return (
-    <main
-      className={cn(
-        gameFont.className,
-        "relative flex min-h-[100dvh] w-full flex-col overflow-hidden bg-[#F6F0D7]"
-      )}
-    >
-      <header className="z-30 w-full shrink-0 bg-transparent">
-        <div
-          className={cn(
-            "mx-auto w-full max-w-[430px] px-[12px] pt-[12px] pb-[10px]",
-            compactMode === "compact" && "pt-[10px] pb-[8px]",
-            compactMode === "tight" && "pt-[8px] pb-[6px]"
-          )}
-        >
-          <div className="grid w-full grid-cols-[40px_1fr_40px] items-center gap-[8px]">
-            <button
-              type="button"
-              onClick={() => setScreen("home")}
-              aria-label="Back to home"
-              className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px]"
-            >
-              <img
-                src={dlsAssets.home}
-                alt="Home"
-                className="h-[24px] w-[24px]"
-                width={24}
-                height={24}
-                loading="lazy"
-                decoding="async"
-              />
-            </button>
-
-            <div className="flex flex-1 flex-col justify-center text-center text-[18px] leading-[26px] font-semibold text-black">
-              {displayDate}
-            </div>
-
-            {isHintsTurnedOff ? (
-              <div className="h-[40px] w-[40px]" aria-hidden="true" />
-            ) : (
+          <div
+            className={cn(
+              "mx-auto w-full max-w-[430px] px-[12px] pt-[12px] pb-[10px]",
+              compactMode === "compact" && "pt-[10px] pb-[8px]",
+              compactMode === "tight" && "pt-[8px] pb-[6px]"
+            )}
+          >
+            <div className="grid w-full grid-cols-[40px_1fr_40px] items-center gap-[8px]">
               <button
                 type="button"
-                onClick={handleHintPowerUp}
-                aria-label="Use hint power-up"
-                disabled={!canUseHint}
-                className={cn(
-                  "inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px] transition-[opacity,transform,box-shadow] duration-200",
-                  isHintButtonHighlighted &&
-                    "scale-105 animate-pulse ring-4 ring-[#FFB067] ring-offset-2 ring-offset-[#F6F0D7]",
-                  !canUseHint && "cursor-not-allowed opacity-45"
-                )}
+                onClick={() => setScreen("home")}
+                aria-label={copy.backToHome}
+                className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px]"
               >
                 <img
-                  src={dlsAssets.hint}
-                  alt="Hint"
+                  src={dlsAssets.home}
+                  alt={copy.homeIconAlt}
                   className="h-[24px] w-[24px]"
                   width={24}
                   height={24}
@@ -1463,45 +1659,456 @@ export default function Page() {
                   decoding="async"
                 />
               </button>
-            )}
-          </div>
 
-          <div
-            className={cn(
-              "mt-[8px] flex w-full justify-center",
-              compactMode === "compact" && "mt-[6px]",
-              compactMode === "tight" && "mt-[4px]"
-            )}
-          >
+              <div className="flex flex-1 flex-col justify-center text-center text-[18px] leading-[26px] font-semibold text-black">
+                {displayDate}
+              </div>
+
+              {isHintsTurnedOff ? (
+                <div className="h-[40px] w-[40px]" aria-hidden="true" />
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleHintPowerUp}
+                  aria-label={copy.useHint}
+                  disabled={!canUseHint}
+                  className={cn(
+                    "inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px] transition-[opacity,transform,box-shadow] duration-200",
+                    isHintButtonHighlighted &&
+                      "scale-105 animate-pulse ring-4 ring-[#FFB067] ring-offset-2 ring-offset-[#F6F0D7]",
+                    !canUseHint && "cursor-not-allowed opacity-45"
+                  )}
+                >
+                  <img
+                    src={dlsAssets.hint}
+                    alt={copy.hintIconAlt}
+                    className="h-[24px] w-[24px]"
+                    width={24}
+                    height={24}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </button>
+              )}
+            </div>
+
             <div
               className={cn(
-                "inline-flex items-center justify-center gap-[6px] rounded-[32px] bg-black px-[8px] py-[2px]",
-                compactMode === "compact" && "gap-[5px] px-[7px]",
-                compactMode === "tight" && "gap-[4px] px-[6px] py-[1px]"
+                "mt-[8px] flex w-full justify-center",
+                compactMode === "compact" && "mt-[6px]",
+                compactMode === "tight" && "mt-[4px]"
               )}
             >
               <div
                 className={cn(
-                  "text-center text-[16px] leading-[24px] font-semibold text-white",
-                  compactMode === "compact" && "text-[15px] leading-[22px]",
-                  compactMode === "tight" && "text-[14px] leading-[20px]"
+                  "inline-flex items-center justify-center gap-[6px] rounded-[32px] bg-black px-[8px] py-[2px]",
+                  compactMode === "compact" && "gap-[5px] px-[7px]",
+                  compactMode === "tight" && "gap-[4px] px-[6px] py-[1px]"
                 )}
               >
-                {timerLabel.replace(/^0/, "")}
+                <div
+                  className={cn(
+                    "text-center text-[16px] leading-[24px] font-semibold text-white",
+                    compactMode === "compact" && "text-[15px] leading-[22px]",
+                    compactMode === "tight" && "text-[14px] leading-[20px]"
+                  )}
+                >
+                  {timerLabel.replace(/^0/, "")}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPauseOpen(true)}
+                  aria-label={copy.pauseGame}
+                  className={cn(
+                    "inline-flex h-[20px] w-[20px] items-center justify-center",
+                    compactMode === "compact" && "h-[18px] w-[18px]",
+                    compactMode === "tight" && "h-[16px] w-[16px]"
+                  )}
+                >
+                  <img
+                    src={dlsAssets.pause}
+                    alt={copy.pauseIconAlt}
+                    className={cn(
+                      "h-[20px] w-[20px]",
+                      compactMode === "compact" && "h-[18px] w-[18px]",
+                      compactMode === "tight" && "h-[16px] w-[16px]"
+                    )}
+                    width={20}
+                    height={20}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </button>
               </div>
+            </div>
+          </div>
+        </header>
+
+        <div
+          className={cn(
+            "mx-auto flex min-h-0 w-full max-w-[430px] flex-1 flex-col overflow-y-auto px-[12px] pb-[12px]",
+            compactMode === "compact" && "pb-[10px]",
+            compactMode === "tight" && "pb-[8px]"
+          )}
+        >
+          <section
+            data-screen-slot="board"
+            className="flex min-h-0 w-full flex-1 flex-col items-center justify-center self-stretch"
+          >
+            <div
+              className={cn(
+                "mx-auto grid w-full max-w-[390px] gap-[3.92px] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                compactMode === "compact" && "max-w-[352px] gap-[3.2px]",
+                compactMode === "tight" && "max-w-[320px] gap-[2.8px]",
+                celebration && "animate-board-celebrate"
+              )}
+              style={{
+                gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+              }}
+            >
+              {Array.from({ length: GRID_ROWS * GRID_COLS }, (_, index) => {
+                const row = Math.floor(index / GRID_COLS)
+                const col = index % GRID_COLS
+                const key = keyFor(row, col)
+                const cell = cellData[key]
+
+                if (!cell) {
+                  return (
+                    <div
+                      key={key}
+                      className={cn(
+                        "aspect-square rounded-[3.92px] bg-[#C5D89D]",
+                        compactMode === "compact" && "rounded-[3.2px]",
+                        compactMode === "tight" && "rounded-[2.8px]"
+                      )}
+                    />
+                  )
+                }
+
+                const entry = game.entries[key]
+                const isActive = activeClue.cells.some(
+                  (clueCell) => clueCell.key === key
+                )
+                const isCursor = activeClue.cells[game.activeIndex]?.key === key
+                const lockSource = game.lockSources[key]
+                const completedCell = cell.clueIds.some((clueId) =>
+                  solvedSet.has(clueId)
+                )
+                const feedbackMatch =
+                  game.feedback && cell.clueIds.includes(game.feedback.clueId)
+                    ? game.feedback
+                    : null
+                const solvedCelebrationIndex =
+                  celebration?.solvedCellKeys.findIndex(
+                    (cellKey) => cellKey === key
+                  )
+                const blastCelebrationIndex =
+                  celebration?.blastCellKeys.findIndex(
+                    (cellKey) => cellKey === key
+                  )
+                const isSolvedCelebration =
+                  typeof solvedCelebrationIndex === "number" &&
+                  solvedCelebrationIndex >= 0
+                const isBlastCelebration =
+                  typeof blastCelebrationIndex === "number" &&
+                  blastCelebrationIndex >= 0
+                const celebrationDelay = isSolvedCelebration
+                  ? solvedCelebrationIndex * 45
+                  : isBlastCelebration
+                    ? blastCelebrationIndex * 70
+                    : 0
+
+                return (
+                  <button
+                    key={`${key}-${feedbackMatch?.stamp ?? 0}-${isSolvedCelebration || isBlastCelebration ? (celebration?.stamp ?? 0) : 0}`}
+                    type="button"
+                    onClick={() => {
+                      const memberships = cell.clueIds
+                      if (memberships.length === 0) {
+                        return
+                      }
+
+                      const nextClueId =
+                        memberships.includes(game.activeClueId) &&
+                        memberships.length > 1
+                          ? (memberships.find(
+                              (clueId) => clueId !== game.activeClueId
+                            ) ?? memberships[0])
+                          : (memberships.find(
+                              (clueId) =>
+                                clueById[clueId].direction === "across"
+                            ) ?? memberships[0])
+
+                      const clue = clueById[nextClueId]
+                      const preferredIndex = clue.cells.findIndex(
+                        (clueCell) => clueCell.key === key
+                      )
+                      selectClue(nextClueId, preferredIndex)
+                    }}
+                    className={cn(
+                      "group relative isolate flex aspect-square items-center justify-center overflow-hidden rounded-[3.92px] p-[7.85px] transition-[background-color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98]",
+                      compactMode === "compact" && "rounded-[3.2px] p-[6.2px]",
+                      compactMode === "tight" && "rounded-[2.8px] p-[5.2px]",
+                      feedbackMatch?.type === "wrong"
+                        ? "animate-clue-shake bg-[#f5b5b5]"
+                        : isCursor
+                          ? "bg-[#FF9C55]"
+                          : completedCell
+                            ? "bg-[#D9FFE6]"
+                            : isActive
+                              ? "bg-[#FFC191]"
+                              : "bg-white",
+                      isCursor &&
+                        "shadow-[0_0_0_1px_rgba(184,66,18,0.10)] ring-2 ring-[#B84212] ring-inset",
+                      feedbackMatch?.type === "correct" &&
+                        !isSolvedCelebration &&
+                        "animate-clue-pop",
+                      isSolvedCelebration && "animate-cell-solved-settle",
+                      isBlastCelebration && "animate-cell-blast-reveal"
+                    )}
+                    style={
+                      isSolvedCelebration || isBlastCelebration
+                        ? {
+                            animationDelay: `${celebrationDelay}ms`,
+                          }
+                        : undefined
+                    }
+                  >
+                    {(isSolvedCelebration || isBlastCelebration) && (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "pointer-events-none absolute inset-0 rounded-[inherit]",
+                          isSolvedCelebration
+                            ? "animate-cell-solved-wash bg-[linear-gradient(135deg,rgba(255,156,85,0.22),rgba(120,208,145,0.28))]"
+                            : "animate-cell-blast-glow bg-[radial-gradient(circle_at_center,rgba(255,156,85,0.38),rgba(255,156,85,0.14)_38%,rgba(120,208,145,0.18)_68%,transparent_100%)]"
+                        )}
+                        style={{ animationDelay: `${celebrationDelay}ms` }}
+                      />
+                    )}
+
+                    {feedbackMatch?.type === "correct" && (
+                      <span
+                        aria-hidden="true"
+                        className="animate-cell-correct-flash pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(135deg,rgba(255,156,85,0.28),rgba(120,208,145,0.34))]"
+                      />
+                    )}
+
+                    {isBlastCelebration && (
+                      <span
+                        aria-hidden="true"
+                        className="animate-cell-blast-ring pointer-events-none absolute inset-[-12%] rounded-[inherit] border border-[#FF9C55]/60"
+                        style={{ animationDelay: `${celebrationDelay + 30}ms` }}
+                      />
+                    )}
+
+                    {cell.number ? (
+                      <span
+                        className={cn(
+                          "absolute top-0 left-[2.14px] text-[9px] font-semibold text-[#006BAE]",
+                          compactMode === "compact" &&
+                            "left-[1.8px] text-[7.8px]",
+                          compactMode === "tight" && "left-[1.4px] text-[6.8px]"
+                        )}
+                      >
+                        {cell.number}
+                      </span>
+                    ) : null}
+
+                    <span
+                      className={cn(
+                        "relative z-10 text-center text-[12.56px] leading-none font-semibold transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                        compactMode === "compact" && "text-[11.4px]",
+                        compactMode === "tight" && "text-[10.4px]",
+                        lockSource === "given"
+                          ? "text-[#006BAE]"
+                          : completedCell ||
+                              lockSource === "solved" ||
+                              lockSource === "revealed"
+                            ? "text-[#166631]"
+                            : "text-black",
+                        !entry && "text-transparent",
+                        (isSolvedCelebration || isBlastCelebration) &&
+                          "animate-cell-letter-settle"
+                      )}
+                      style={
+                        isSolvedCelebration || isBlastCelebration
+                          ? {
+                              animationDelay: `${celebrationDelay + 20}ms`,
+                            }
+                          : undefined
+                      }
+                    >
+                      {entry ?? "_"}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+
+          <div
+            data-screen-slot="tray"
+            className={cn(
+              "mt-auto flex w-full flex-col gap-[15px] self-stretch",
+              compactMode === "compact" && "gap-[12px]",
+              compactMode === "tight" && "gap-[10px]"
+            )}
+          >
+            <section
+              className={cn(
+                homeTitleFont.className,
+                "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#89986D] px-[5px] py-[8px]",
+                compactMode === "compact" && "min-h-[70px] py-[7px]",
+                compactMode === "tight" && "min-h-[62px] py-[6px]"
+              )}
+            >
               <button
                 type="button"
-                onClick={() => setIsPauseOpen(true)}
-                aria-label="Pause game"
+                onClick={() => cycleClue(-1)}
+                aria-label={copy.previousClue}
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+              >
+                <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={3} />
+              </button>
+
+              <div
+                key={activeClue.id}
                 className={cn(
-                  "inline-flex h-[20px] w-[20px] items-center justify-center",
-                  compactMode === "compact" && "h-[18px] w-[18px]",
-                  compactMode === "tight" && "h-[16px] w-[16px]"
+                  "animate-clue-fade flex min-h-full flex-1 flex-col items-start justify-center gap-[5px] self-stretch px-[8px]",
+                  compactMode === "compact" && "gap-[4px] px-[7px]",
+                  compactMode === "tight" && "gap-[3px] px-[6px]"
                 )}
               >
+                <div
+                  className={cn(
+                    "font-semibold text-[#C5D89D]",
+                    locale === "hi"
+                      ? "text-[18px] leading-[24px]"
+                      : "text-[11px] tracking-[2.2px] uppercase",
+                    compactMode === "compact" &&
+                      (locale === "hi"
+                        ? "text-[16px] leading-[22px]"
+                        : "text-[10px] tracking-[2px]"),
+                    compactMode === "tight" &&
+                      (locale === "hi"
+                        ? "text-[15px] leading-[20px]"
+                        : "text-[9px] tracking-[1.6px]")
+                  )}
+                >
+                  {copy.currentClue}
+                </div>
+                <div
+                  className={cn(
+                    "text-[16px] leading-[20px] font-semibold text-[#F6F0D7]",
+                    compactMode === "compact" && "text-[15px] leading-[18px]",
+                    compactMode === "tight" && "text-[14px] leading-[17px]"
+                  )}
+                >
+                  {copy.formatClueLabel(
+                    activeClue.number,
+                    activeClue.direction
+                  )}
+                  . {activeClue.clue}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => cycleClue(1)}
+                aria-label={copy.nextClue}
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+              >
+                <ChevronRight className="h-[18px] w-[18px]" strokeWidth={3} />
+              </button>
+            </section>
+          </div>
+        </div>
+
+        <section
+          data-screen-slot="keyboard"
+          data-screen-anchor="true"
+          className={cn(
+            "z-20 w-full shrink-0 bg-black/25 px-[12px] pt-[12px] pb-[calc(env(safe-area-inset-bottom)+12px)]",
+            compactMode === "compact" &&
+              "pt-[10px] pb-[calc(env(safe-area-inset-bottom)+10px)]",
+            compactMode === "tight" &&
+              "pt-[8px] pb-[calc(env(safe-area-inset-bottom)+8px)]"
+          )}
+        >
+          <div
+            className={cn(
+              "mx-auto flex w-full max-w-[430px] flex-col gap-[8px]",
+              compactMode === "compact" && "gap-[6px]",
+              compactMode === "tight" && "gap-[5px]"
+            )}
+          >
+            <div
+              className={cn(
+                "grid w-full grid-cols-10 gap-[6px]",
+                compactMode === "compact" && "gap-[5px]",
+                compactMode === "tight" && "gap-[4px]"
+              )}
+            >
+              {keyboardRows[0].map((key) => (
+                <KeyButton
+                  key={key}
+                  value={key}
+                  onPress={handleLetter}
+                  compactMode={compactMode}
+                />
+              ))}
+            </div>
+
+            <div
+              className={cn(
+                "grid w-full grid-cols-9 gap-[6px] px-[6%]",
+                compactMode === "compact" && "gap-[5px]",
+                compactMode === "tight" && "gap-[4px]"
+              )}
+            >
+              {keyboardRows[1].map((key) => (
+                <KeyButton
+                  key={key}
+                  value={key}
+                  onPress={handleLetter}
+                  compactMode={compactMode}
+                />
+              ))}
+            </div>
+
+            <div
+              className={cn(
+                "grid w-full grid-cols-[repeat(7,minmax(0,1fr))_1.35fr] gap-[6px] px-[8.5%]",
+                compactMode === "compact" && "gap-[5px]",
+                compactMode === "tight" && "gap-[4px]"
+              )}
+            >
+              {keyboardRows[2].map((key) => (
+                <KeyButton
+                  key={key}
+                  value={key}
+                  onPress={handleLetter}
+                  compactMode={compactMode}
+                />
+              ))}
+              <button
+                type="button"
+                onClick={handleBackspace}
+                className={cn(
+                  keyboardButtonClassName,
+                  compactMode === "normal" &&
+                    "h-[48px] rounded-[8px] text-[18px] leading-[26px]",
+                  compactMode === "compact" &&
+                    "h-[44px] rounded-[8px] text-[16px] leading-[22px]",
+                  compactMode === "tight" &&
+                    "h-[40px] rounded-[7px] text-[15px] leading-[20px]"
+                )}
+                aria-label={copy.backspace}
+              >
                 <img
-                  src={dlsAssets.pause}
-                  alt="Pause"
+                  src={dlsAssets.backspace}
+                  alt={copy.backspace}
                   className={cn(
                     "h-[20px] w-[20px]",
                     compactMode === "compact" && "h-[18px] w-[18px]",
@@ -1515,347 +2122,89 @@ export default function Page() {
               </button>
             </div>
           </div>
-        </div>
-      </header>
-
-      <div
-        className={cn(
-          "mx-auto flex min-h-0 w-full max-w-[430px] flex-1 flex-col overflow-y-auto px-[12px] pb-[12px]",
-          compactMode === "compact" && "pb-[10px]",
-          compactMode === "tight" && "pb-[8px]"
-        )}
-      >
-        <section className="flex min-h-0 w-full flex-1 flex-col items-center justify-center self-stretch">
-          <div
-            className={cn(
-              "mx-auto grid w-full max-w-[390px] gap-[3.92px]",
-              compactMode === "compact" && "max-w-[352px] gap-[3.2px]",
-              compactMode === "tight" && "max-w-[320px] gap-[2.8px]"
-            )}
-            style={{
-              gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
-            }}
-          >
-            {Array.from({ length: GRID_ROWS * GRID_COLS }, (_, index) => {
-              const row = Math.floor(index / GRID_COLS)
-              const col = index % GRID_COLS
-              const key = keyFor(row, col)
-              const cell = cellData[key]
-
-              if (!cell) {
-                return (
-                  <div
-                    key={key}
-                    className={cn(
-                      "aspect-square rounded-[3.92px] bg-[#C5D89D]",
-                      compactMode === "compact" && "rounded-[3.2px]",
-                      compactMode === "tight" && "rounded-[2.8px]"
-                    )}
-                  />
-                )
-              }
-
-              const entry = game.entries[key]
-              const isActive = activeClue.cells.some(
-                (clueCell) => clueCell.key === key
-              )
-              const isCursor = activeClue.cells[game.activeIndex]?.key === key
-              const lockSource = game.lockSources[key]
-              const completedCell = cell.clueIds.some((clueId) =>
-                solvedSet.has(clueId)
-              )
-              const feedbackMatch =
-                game.feedback && cell.clueIds.includes(game.feedback.clueId)
-                  ? game.feedback
-                  : null
-
-              return (
-                <button
-                  key={`${key}-${feedbackMatch?.stamp ?? 0}`}
-                  type="button"
-                  onClick={() => {
-                    const memberships = cell.clueIds
-                    if (memberships.length === 0) {
-                      return
-                    }
-
-                    const nextClueId =
-                      memberships.includes(game.activeClueId) &&
-                      memberships.length > 1
-                        ? (memberships.find(
-                            (clueId) => clueId !== game.activeClueId
-                          ) ?? memberships[0])
-                        : (memberships.find(
-                            (clueId) => clueById[clueId].direction === "across"
-                          ) ?? memberships[0])
-
-                    const clue = clueById[nextClueId]
-                    const preferredIndex = clue.cells.findIndex(
-                      (clueCell) => clueCell.key === key
-                    )
-                    selectClue(nextClueId, preferredIndex)
-                  }}
-                  className={cn(
-                    "relative flex aspect-square items-center justify-center rounded-[3.92px] p-[7.85px] transition-all duration-200",
-                    compactMode === "compact" && "rounded-[3.2px] p-[6.2px]",
-                    compactMode === "tight" && "rounded-[2.8px] p-[5.2px]",
-                    feedbackMatch?.type === "wrong"
-                      ? "animate-clue-shake bg-[#f5b5b5]"
-                      : completedCell
-                        ? "bg-[#D9FFE6]"
-                        : isActive
-                          ? "bg-[#FFC191]"
-                          : "bg-white",
-                    isCursor && "ring-[1.57px] ring-[#FF9C55] ring-inset",
-                    feedbackMatch?.type === "correct" && "animate-clue-pop"
-                  )}
-                >
-                  {cell.number ? (
-                    <span
-                      className={cn(
-                        "absolute top-0 left-[2.14px] text-[6.28px] font-semibold text-[#006BAE]",
-                        compactMode === "compact" &&
-                          "left-[1.8px] text-[5.6px]",
-                        compactMode === "tight" && "left-[1.4px] text-[5px]"
-                      )}
-                    >
-                      {cell.number}
-                    </span>
-                  ) : null}
-
-                  <span
-                    className={cn(
-                      "text-center text-[12.56px] leading-none font-semibold",
-                      compactMode === "compact" && "text-[11.4px]",
-                      compactMode === "tight" && "text-[10.4px]",
-                      lockSource === "given"
-                        ? "text-[#006BAE]"
-                        : completedCell ||
-                            lockSource === "solved" ||
-                            lockSource === "revealed"
-                          ? "text-[#166631]"
-                          : "text-black",
-                      !entry && "text-transparent"
-                    )}
-                  >
-                    {entry ?? "_"}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
         </section>
 
-        <div
-          className={cn(
-            "mt-auto flex w-full flex-col gap-[15px] self-stretch",
-            compactMode === "compact" && "gap-[12px]",
-            compactMode === "tight" && "gap-[10px]"
-          )}
-        >
-          <section
-            className={cn(
-              homeTitleFont.className,
-              "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#89986D] px-[5px] py-[8px]",
-              compactMode === "compact" && "min-h-[70px] py-[7px]",
-              compactMode === "tight" && "min-h-[62px] py-[6px]"
-            )}
-          >
-            <button
-              type="button"
-              onClick={() => cycleClue(-1)}
-              aria-label="Previous clue"
-              className="relative h-[24px] w-[24px] overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
-            >
-              <ChevronLeft
-                className="absolute top-[6px] left-[8px] h-[12px] w-[6.85px]"
-                strokeWidth={3}
-              />
-            </button>
-
-            <div
-              key={activeClue.id}
-              className={cn(
-                "animate-clue-fade flex min-h-full flex-1 flex-col items-start justify-center gap-[5px] self-stretch px-[8px]",
-                compactMode === "compact" && "gap-[4px] px-[7px]",
-                compactMode === "tight" && "gap-[3px] px-[6px]"
-              )}
-            >
-              <div
-                className={cn(
-                  "text-[11px] font-semibold tracking-[2.2px] text-[#C5D89D] uppercase",
-                  compactMode === "compact" && "text-[10px] tracking-[2px]",
-                  compactMode === "tight" && "text-[9px] tracking-[1.6px]"
-                )}
-              >
-                Current Clue
-              </div>
-              <div
-                className={cn(
-                  "text-[16px] leading-[20px] font-semibold text-[#F6F0D7]",
-                  compactMode === "compact" && "text-[15px] leading-[18px]",
-                  compactMode === "tight" && "text-[14px] leading-[17px]"
-                )}
-              >
-                {activeClue.number}
-                {activeClue.direction === "across" ? "a" : "d"}.{" "}
-                {activeClue.clue}
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => cycleClue(1)}
-              aria-label="Next clue"
-              className="relative h-[24px] w-[24px] overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
-            >
-              <ChevronRight
-                className="absolute top-[6px] left-[9px] h-[12px] w-[6.85px]"
-                strokeWidth={3}
-              />
-            </button>
-          </section>
-        </div>
-      </div>
-
-      <section
-        className={cn(
-          "z-20 w-full shrink-0 bg-black/25 px-[12px] pt-[12px] pb-[calc(env(safe-area-inset-bottom)+12px)]",
-          compactMode === "compact" &&
-            "pt-[10px] pb-[calc(env(safe-area-inset-bottom)+10px)]",
-          compactMode === "tight" &&
-            "pt-[8px] pb-[calc(env(safe-area-inset-bottom)+8px)]"
-        )}
-      >
-        <div
-          className={cn(
-            "mx-auto flex w-full max-w-[430px] flex-col gap-[8px]",
-            compactMode === "compact" && "gap-[6px]",
-            compactMode === "tight" && "gap-[5px]"
-          )}
-        >
-          <div
-            className={cn(
-              "grid w-full grid-cols-10 gap-[6px]",
-              compactMode === "compact" && "gap-[5px]",
-              compactMode === "tight" && "gap-[4px]"
-            )}
-          >
-            {keyboardRows[0].map((key) => (
-              <KeyButton
-                key={key}
-                value={key}
-                onPress={handleLetter}
-                compactMode={compactMode}
-              />
-            ))}
-          </div>
-
-          <div
-            className={cn(
-              "grid w-full grid-cols-9 gap-[6px] px-[6%]",
-              compactMode === "compact" && "gap-[5px]",
-              compactMode === "tight" && "gap-[4px]"
-            )}
-          >
-            {keyboardRows[1].map((key) => (
-              <KeyButton
-                key={key}
-                value={key}
-                onPress={handleLetter}
-                compactMode={compactMode}
-              />
-            ))}
-          </div>
-
-          <div
-            className={cn(
-              "grid w-full grid-cols-[repeat(7,minmax(0,1fr))_1.35fr] gap-[6px] px-[8.5%]",
-              compactMode === "compact" && "gap-[5px]",
-              compactMode === "tight" && "gap-[4px]"
-            )}
-          >
-            {keyboardRows[2].map((key) => (
-              <KeyButton
-                key={key}
-                value={key}
-                onPress={handleLetter}
-                compactMode={compactMode}
-              />
-            ))}
-            <button
-              type="button"
-              onClick={handleBackspace}
-              className={cn(
-                keyboardButtonClassName,
-                compactMode === "normal" &&
-                  "h-[48px] rounded-[8px] text-[18px] leading-[26px]",
-                compactMode === "compact" &&
-                  "h-[44px] rounded-[8px] text-[16px] leading-[22px]",
-                compactMode === "tight" &&
-                  "h-[40px] rounded-[7px] text-[15px] leading-[20px]"
-              )}
-              aria-label="Backspace"
-            >
+        {isPauseOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]">
+            <div className="flex w-full max-w-[320px] flex-col items-center rounded-[20px] bg-white px-[24px] py-[32px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]">
               <img
-                src={dlsAssets.backspace}
-                alt="Backspace"
-                className={cn(
-                  "h-[20px] w-[20px]",
-                  compactMode === "compact" && "h-[18px] w-[18px]",
-                  compactMode === "tight" && "h-[16px] w-[16px]"
-                )}
-                width={20}
-                height={20}
+                src={dlsAssets.timer}
+                alt={copy.pauseIllustrationAlt}
+                className="h-[48px] w-[48px]"
+                width={48}
+                height={48}
                 loading="lazy"
                 decoding="async"
               />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {isPauseOpen && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/35 px-4 backdrop-blur-[2px]">
-          <div className="flex w-full max-w-[320px] flex-col items-center rounded-[20px] bg-white px-[24px] py-[32px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]">
-            <img
-              src={dlsAssets.timer}
-              alt="Paused"
-              className="h-[48px] w-[48px]"
-              width={48}
-              height={48}
-              loading="lazy"
-              decoding="async"
-            />
-            <h2 className="mt-4 text-center text-[24px] leading-[36px] font-semibold text-black">
-              Game Paused
-            </h2>
-            <p className="mt-2 text-center text-[18px] leading-[28px] font-normal text-black/70">
-              Take a break and continue when you are ready.
-            </p>
-            <div className="mt-6 flex w-full flex-col gap-[10px]">
-              <PauseToggleRow
-                label="Turn off hints"
-                checked={isHintsTurnedOff}
-                onChange={setIsHintsTurnedOff}
-              />
-              <PauseToggleRow
-                label="Turn off word blast"
-                checked={isWordBlastTurnedOff}
-                onChange={setIsWordBlastTurnedOff}
-              />
+              <h2 className="mt-4 text-center text-[24px] leading-[36px] font-semibold text-black">
+                {copy.gamePausedTitle}
+              </h2>
+              <p className="mt-2 text-center text-[18px] leading-[28px] font-normal text-black/70">
+                {copy.gamePausedDescription}
+              </p>
+              <div className="mt-6 flex w-full flex-col gap-[10px]">
+                <PauseToggleRow
+                  label={copy.hintToggle}
+                  checked={isHintsTurnedOff}
+                  onChange={setIsHintsTurnedOff}
+                />
+                <PauseToggleRow
+                  label={copy.bonusWordsToggle}
+                  description={copy.bonusWordsHint}
+                  checked={isWordBlastTurnedOff}
+                  onChange={setIsWordBlastTurnedOff}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPauseOpen(false)}
+                className="mt-6 inline-flex h-[56px] w-full max-w-[240px] items-center justify-center rounded-[12px] bg-black px-4 py-[14px] text-[20px] leading-[30px] font-semibold text-white"
+              >
+                {copy.continueButton}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsPauseOpen(false)}
-              className="mt-6 inline-flex h-[56px] w-full max-w-[240px] items-center justify-center rounded-[12px] bg-black px-4 py-[14px] text-[20px] leading-[30px] font-semibold text-white"
-            >
-              Continue
-            </button>
           </div>
+        )}
+      </main>
+    )
+  }
+
+  const transitionPair: ScreenTransitionPair = screenTransition
+    ? (`${screenTransition.from}-${screenTransition.to}` as ScreenTransitionPair)
+    : "idle"
+  const activeScreen = screenTransition?.to ?? settledScreen
+  const activeMotionState: ScreenMotionState = screenTransition
+    ? "enter"
+    : "static"
+  const activePair = screenTransition ? transitionPair : "idle"
+
+  return (
+    <div className="relative min-h-[100dvh] overflow-hidden bg-[#F6F0D7]">
+      {screenTransition ? (
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-0 z-10",
+            screenTransition.phase === "active" && "animate-screen-layer-exit"
+          )}
+          aria-hidden="true"
+        >
+          {renderScreen(screenTransition.from, "exit", transitionPair)}
         </div>
-      )}
-    </main>
+      ) : null}
+      <div
+        className={cn(
+          "relative z-20",
+          screenTransition
+            ? screenTransition.phase === "prepare"
+              ? "opacity-0"
+              : "animate-screen-layer-enter"
+            : "opacity-100"
+        )}
+        onAnimationEnd={handleTransitionAnimationEnd}
+      >
+        {renderScreen(activeScreen, activeMotionState, activePair)}
+      </div>
+    </div>
   )
 }
 
@@ -1890,18 +2239,27 @@ function KeyButton({
 
 function PauseToggleRow({
   label,
+  description,
   checked,
   onChange,
 }: {
   label: string
+  description?: string
   checked: boolean
   onChange: (value: boolean) => void
 }) {
   return (
     <div className="flex items-center justify-between rounded-[12px] border border-black/10 bg-[#F8F6EF] px-[12px] py-[10px]">
-      <span className="text-[14px] leading-[20px] font-semibold text-black">
-        {label}
-      </span>
+      <div className="min-w-0 pr-3">
+        <div className="text-[14px] leading-[20px] font-semibold text-black">
+          {label}
+        </div>
+        {description ? (
+          <div className="mt-1 text-[12px] leading-[18px] text-black/60">
+            {description}
+          </div>
+        ) : null}
+      </div>
       <button
         type="button"
         role="switch"
@@ -1923,17 +2281,17 @@ function PauseToggleRow({
   )
 }
 
-function HomeMascot({ onTap }: { onTap: () => void }) {
+function HomeMascot({ onTap, label }: { onTap: () => void; label: string }) {
   return (
     <button
       type="button"
       onClick={onTap}
       className="rounded-full"
-      aria-label="वर्ग पहेली logo"
+      aria-label={label}
     >
       <img
         src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
-        alt="वर्ग पहेली logo"
+        alt={label}
         className="h-[100px] w-[100px] shrink-0 object-contain"
         width={100}
         height={100}
@@ -1944,11 +2302,11 @@ function HomeMascot({ onTap }: { onTap: () => void }) {
   )
 }
 
-function SummaryCelebrationIcon() {
+function SummaryCelebrationIcon({ alt }: { alt: string }) {
   return (
     <img
       src={dlsAssets.trophy}
-      alt="Trophy"
+      alt={alt}
       className="h-[72px] w-[72px] object-contain"
       width={72}
       height={72}
@@ -1958,11 +2316,11 @@ function SummaryCelebrationIcon() {
   )
 }
 
-function FlameBadge() {
+function FlameBadge({ alt }: { alt: string }) {
   return (
     <img
       src={dlsAssets.fire}
-      alt="Streak"
+      alt={alt}
       className="h-[24px] w-[24px] object-contain"
       width={24}
       height={24}
@@ -2076,7 +2434,7 @@ function revealLetters(
     .filter(({ emptyCells }) => emptyCells.length > 1)
 
   if (eligibleClues.length === 0) {
-    return { entries, lockSources }
+    return { entries, lockSources, revealedCellKeys: [] }
   }
 
   const shuffledClues = shuffle(eligibleClues)
@@ -2086,16 +2444,19 @@ function revealLetters(
   )
   const nextEntries = { ...entries }
   const nextLockSources = { ...lockSources }
+  const revealedCellKeys: string[] = []
 
   shuffledClues.slice(0, revealCount).forEach(({ emptyCells }) => {
     const chosenCell = emptyCells[Math.floor(Math.random() * emptyCells.length)]
     nextEntries[chosenCell.key] = cellData[chosenCell.key].solution
     nextLockSources[chosenCell.key] = "revealed"
+    revealedCellKeys.push(chosenCell.key)
   })
 
   return {
     entries: nextEntries,
     lockSources: nextLockSources,
+    revealedCellKeys,
   }
 }
 
@@ -2450,9 +2811,9 @@ function readCompletionHistory(
 function buildWeeklyStreakDays(
   dateKey: string,
   completionHistory: Record<string, boolean>,
-  isTodayComplete: boolean
+  isTodayComplete: boolean,
+  labels: readonly string[]
 ): StreakDay[] {
-  const labels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
   const currentDate = new Date(`${dateKey}T00:00:00`)
   const day = currentDate.getDay()
   const mondayOffset = day === 0 ? -6 : 1 - day
@@ -2502,13 +2863,14 @@ function getNextChallengeDateKey(
   return getLocalDateKey(current)
 }
 
-function formatNextChallengeDate(dateKey: string) {
+function formatNextChallengeDate(dateKey: string, locale: string) {
   const date = new Date(`${dateKey}T00:00:00`)
-  const day = String(date.getDate()).padStart(2, "0")
-  const month = new Intl.DateTimeFormat("en-US", { month: "long" }).format(date)
-  const year = date.getFullYear()
 
-  return `${day} ${month} ${year}`
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date)
 }
 
 function getSolvedClueIds(
@@ -2533,29 +2895,34 @@ function formatElapsedTime(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }
 
-function formatPuzzleDate(dateKey: string) {
-  return new Intl.DateTimeFormat("en-US", {
+function formatPuzzleDate(dateKey: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     year: "numeric",
   }).format(new Date(`${dateKey}T00:00:00`))
 }
 
-function formatPuzzleDateLong(dateKey: string) {
+function formatPuzzleDateLong(dateKey: string, locale: string) {
   const date = new Date(`${dateKey}T00:00:00`)
-  const day = String(date.getDate()).padStart(2, "0")
-  const month = new Intl.DateTimeFormat("en-US", { month: "long" }).format(date)
-  const year = date.getFullYear()
 
-  return `${day} ${month}, ${year}`
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date)
 }
 
-function normalizeMeaning(meaning: string | undefined, answer: string) {
+function normalizeMeaning(
+  meaning: string | undefined,
+  answer: string,
+  copy: CrosswordCopy
+) {
   const normalized = meaning?.trim() ?? ""
 
   if (normalized) {
     return normalized
   }
 
-  return `Meaning for ${answer} will be added soon.`
+  return copy.formatMeaningFallback(answer)
 }
