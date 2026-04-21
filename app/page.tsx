@@ -13,6 +13,13 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react"
 
 import { crosswordLevels } from "@/data/crossword-levels"
 import {
+  DEFAULT_CROSSWORD_LOCALE,
+  getCrosswordCopy,
+  getPreferredCrosswordLocale,
+  type CrosswordLocale,
+  type CrosswordCopy,
+} from "@/lib/i18n/crossword"
+import {
   type ClueDefinition,
   type CrosswordPuzzle,
   type CrosswordPuzzleSummary,
@@ -23,7 +30,7 @@ import {
 import { cn } from "@/lib/utils"
 
 const gameFont = Noto_Sans({
-  subsets: ["latin"],
+  subsets: ["latin", "devanagari"],
   weight: ["400", "600", "700"],
 })
 const homeTitleFont = gameFont
@@ -142,6 +149,9 @@ const dlsAssets = {
 } as const
 
 export default function Page() {
+  const [locale, setLocale] = useState<CrosswordLocale>(
+    DEFAULT_CROSSWORD_LOCALE
+  )
   const [dateKey, setDateKey] = useState(() => getLocalDateKey())
   const [scheduledPuzzle, setScheduledPuzzle] = useState<CrosswordPuzzle>(() =>
     getScheduledPuzzle(crosswordLevels, dateKey)
@@ -189,6 +199,15 @@ export default function Page() {
     () => getPuzzleStorageKey(scheduledPuzzle.id),
     [scheduledPuzzle.id]
   )
+  const copy = useMemo(() => getCrosswordCopy(locale), [locale])
+
+  useEffect(() => {
+    setLocale(getPreferredCrosswordLocale())
+  }, [])
+
+  useEffect(() => {
+    document.documentElement.lang = copy.lang
+  }, [copy.lang])
 
   useEffect(() => {
     let isCancelled = false
@@ -310,10 +329,13 @@ export default function Page() {
   const isGameStateReady =
     loadedStorageKey === storageKey && Boolean(activeClue)
   const solvedSet = useMemo(() => new Set(game.solvedIds), [game.solvedIds])
-  const displayDate = useMemo(() => formatPuzzleDate(dateKey), [dateKey])
+  const displayDate = useMemo(
+    () => formatPuzzleDate(dateKey, copy.intlLocale),
+    [copy.intlLocale, dateKey]
+  )
   const displayLongDate = useMemo(
-    () => formatPuzzleDateLong(dateKey),
-    [dateKey]
+    () => formatPuzzleDateLong(dateKey, copy.intlLocale),
+    [copy.intlLocale, dateKey]
   )
   const sortedSchedule = useMemo(
     () =>
@@ -330,12 +352,22 @@ export default function Page() {
     [game.elapsedSeconds]
   )
   const weeklyStreakDays = useMemo(
-    () => buildWeeklyStreakDays(dateKey, completionHistory, isPuzzleComplete),
-    [completionHistory, dateKey, isPuzzleComplete]
+    () =>
+      buildWeeklyStreakDays(
+        dateKey,
+        completionHistory,
+        isPuzzleComplete,
+        copy.weekdayLabels
+      ),
+    [completionHistory, copy.weekdayLabels, dateKey, isPuzzleComplete]
   )
   const nextChallengeDate = useMemo(
-    () => formatNextChallengeDate(getNextChallengeDateKey(dateKey, schedule)),
-    [dateKey, schedule]
+    () =>
+      formatNextChallengeDate(
+        getNextChallengeDateKey(dateKey, schedule),
+        copy.intlLocale
+      ),
+    [copy.intlLocale, dateKey, schedule]
   )
   const todaysWords = useMemo(
     () =>
@@ -349,11 +381,11 @@ export default function Page() {
         })
         .map((clue) => ({
           id: clue.id,
-          label: `${clue.number}${clue.direction === "across" ? "A" : "D"}`,
+          label: copy.formatClueLabel(clue.number, clue.direction),
           answer: clue.answer,
-          meaning: normalizeMeaning(clue.meaning, clue.answer),
+          meaning: normalizeMeaning(clue.meaning, clue.answer, copy),
         })),
-    [clues]
+    [clues, copy]
   )
 
   useEffect(() => {
@@ -1052,7 +1084,7 @@ export default function Page() {
             "text-center text-[16px] leading-[24px] font-medium text-black/70"
           )}
         >
-          Loading today&apos;s puzzle...
+          {copy.loadingTodayPuzzle}
         </div>
       </main>
     )
@@ -1078,14 +1110,14 @@ export default function Page() {
                 className="flex w-full flex-col items-center justify-start gap-[16px] self-stretch"
               >
                 <div className="flex w-full flex-col items-center justify-start gap-[20px] self-stretch">
-                  <HomeMascot onTap={handleLogoTap} />
+                  <HomeMascot onTap={handleLogoTap} label={copy.mascotLabel} />
                   <div
                     className={cn(
                       homeTitleFont.className,
                       "flex w-full flex-col justify-center self-stretch text-center text-[28px] font-extrabold text-black"
                     )}
                   >
-                    वर्ग पहेली
+                    {copy.appName}
                   </div>
                 </div>
 
@@ -1099,7 +1131,7 @@ export default function Page() {
                       "flex w-full flex-col justify-center self-stretch text-center text-[18px] leading-[26px] font-normal text-black"
                     )}
                   >
-                    Connect the dots, fill the grid
+                    {copy.tagline}
                   </div>
                   <div
                     className={cn(
@@ -1130,10 +1162,10 @@ export default function Page() {
                     )}
                   >
                     {isPuzzleComplete
-                      ? "View Summary"
+                      ? copy.viewResults
                       : hasProgress
-                        ? "Continue Game"
-                        : "Start Game"}
+                        ? copy.continueGame
+                        : copy.startGame}
                   </span>
                 </button>
 
@@ -1145,7 +1177,7 @@ export default function Page() {
                     "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-black bg-transparent px-[14px] text-[16px] leading-[24px] font-semibold text-black"
                   )}
                 >
-                  Settings
+                  {copy.settings}
                 </button>
 
                 {isPuzzleComplete && (
@@ -1157,7 +1189,7 @@ export default function Page() {
                       "inline-flex h-[44px] w-full items-center justify-center rounded-[12px] border border-[#F05C21] bg-[#FFF3ED] px-[14px] text-[16px] leading-[24px] font-semibold text-[#B84212]"
                     )}
                   >
-                    Reset Game
+                    {copy.resetGame}
                   </button>
                 )}
               </div>
@@ -1172,8 +1204,11 @@ export default function Page() {
                   )}
                 >
                   {isPuzzleComplete
-                    ? `Finished in ${timerLabel}`
-                    : `${game.solvedIds.length}/${clues.length} words solved`}
+                    ? copy.formatTimeTaken(timerLabel)
+                    : copy.formatWordsSolved(
+                        game.solvedIds.length,
+                        clues.length
+                      )}
                 </p>
               )}
             </div>
@@ -1190,13 +1225,13 @@ export default function Page() {
               >
                 <div className="flex w-full items-center justify-between">
                   <h2 className="text-[22px] leading-[32px] font-semibold text-black">
-                    Settings
+                    {copy.settings}
                   </h2>
                   <button
                     type="button"
                     onClick={() => setIsHomeSettingsOpen(false)}
                     className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
-                    aria-label="Close settings"
+                    aria-label={copy.closeSettings}
                   >
                     <X
                       className="h-[18px] w-[18px] text-black"
@@ -1206,12 +1241,13 @@ export default function Page() {
                 </div>
                 <div className="mt-4 flex w-full flex-col gap-[10px]">
                   <PauseToggleRow
-                    label="Turn off hints"
+                    label={copy.hintToggle}
                     checked={isHintsTurnedOff}
                     onChange={setIsHintsTurnedOff}
                   />
                   <PauseToggleRow
-                    label="Turn off word blast"
+                    label={copy.bonusWordsToggle}
+                    description={copy.bonusWordsHint}
                     checked={isWordBlastTurnedOff}
                     onChange={setIsWordBlastTurnedOff}
                   />
@@ -1232,17 +1268,17 @@ export default function Page() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-[20px] leading-[28px] font-semibold text-black">
-                      Scheduled puzzles
+                      {copy.scheduledPuzzles}
                     </h2>
                     <p className="mt-1 text-[13px] leading-[20px] text-black/60">
-                      Choose any scheduled puzzle to open it.
+                      {copy.scheduledPuzzlesDescription}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsTestScheduleOpen(false)}
                     className="inline-flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[8px] border border-black/20"
-                    aria-label="Close scheduled puzzles"
+                    aria-label={copy.closeScheduledPuzzles}
                   >
                     <X
                       className="h-[18px] w-[18px] text-black"
@@ -1267,11 +1303,11 @@ export default function Page() {
                             {puzzle.title}
                           </div>
                           <div className="text-[12px] leading-[18px] text-black/60">
-                            {formatPuzzleDate(puzzle.date)}
+                            {formatPuzzleDate(puzzle.date, copy.intlLocale)}
                           </div>
                         </div>
                         <div className="text-[12px] leading-[18px] font-semibold text-black/70">
-                          {isCurrentPuzzle ? "Open" : "Play"}
+                          {isCurrentPuzzle ? copy.openPuzzle : copy.playPuzzle}
                         </div>
                       </button>
                     )
@@ -1298,7 +1334,7 @@ export default function Page() {
                 data-screen-slot="hero"
                 className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch"
               >
-                <SummaryCelebrationIcon />
+                <SummaryCelebrationIcon alt={copy.trophyAlt} />
                 <div className="flex w-full flex-col items-center justify-start gap-[4px] self-stretch">
                   <div
                     className={cn(
@@ -1306,7 +1342,7 @@ export default function Page() {
                       "w-full text-center text-[24px] leading-[36px] font-extrabold text-black"
                     )}
                   >
-                    Congratulations!
+                    {copy.summaryTitle}
                   </div>
                   <div
                     className={cn(
@@ -1314,7 +1350,7 @@ export default function Page() {
                       "w-full text-center text-[16px] leading-[24px] font-normal text-black"
                     )}
                   >
-                    You have completed the challenge
+                    {copy.summarySubtitle}
                   </div>
                 </div>
               </div>
@@ -1330,12 +1366,12 @@ export default function Page() {
                       "text-[18px] leading-[26px] font-extrabold text-black"
                     )}
                   >
-                    Total Time
+                    {copy.totalTime}
                   </div>
                   <div className="flex items-center justify-start gap-[4px]">
                     <img
                       src={dlsAssets.timer}
-                      alt="Timer"
+                      alt={copy.totalTime}
                       className="h-[24px] w-[24px]"
                       width={24}
                       height={24}
@@ -1360,7 +1396,7 @@ export default function Page() {
                       "text-[18px] leading-[26px] font-extrabold text-black"
                     )}
                   >
-                    View Todays Words
+                    {copy.viewTodaysWords}
                   </div>
                   <button
                     type="button"
@@ -1370,7 +1406,7 @@ export default function Page() {
                       "inline-flex h-[36px] items-center justify-center rounded-[8px] border border-black px-[12px] text-[14px] leading-[20px] font-bold text-black"
                     )}
                   >
-                    View Meaning
+                    {copy.understandWordMeanings}
                   </button>
                 </div>
 
@@ -1382,9 +1418,9 @@ export default function Page() {
                         "text-[18px] leading-[26px] font-extrabold text-black"
                       )}
                     >
-                      Weekly Streak
+                      {copy.weeklyStreak}
                     </div>
-                    <FlameBadge />
+                    <FlameBadge alt={copy.streakAlt} />
                   </div>
 
                   <div className="inline-flex w-full items-center justify-between self-stretch">
@@ -1398,7 +1434,7 @@ export default function Page() {
                             <>
                               <img
                                 src={dlsAssets.ray}
-                                alt="Today"
+                                alt={copy.todayAlt}
                                 className="absolute -inset-[8px] h-[40px] w-[40px]"
                                 width={40}
                                 height={40}
@@ -1407,7 +1443,7 @@ export default function Page() {
                               />
                               <img
                                 src={dlsAssets.tick}
-                                alt="Completed"
+                                alt={copy.completedAlt}
                                 className="relative z-10 h-[20px] w-[20px]"
                                 width={20}
                                 height={20}
@@ -1424,7 +1460,10 @@ export default function Page() {
                                     ? dlsAssets.cross
                                     : dlsAssets.emptyCell
                               }
-                              alt={day.state}
+                              alt={copy.formatStreakStateAlt(
+                                day.state,
+                                day.isToday
+                              )}
                               className="h-[20px] w-[20px]"
                               width={20}
                               height={20}
@@ -1465,7 +1504,7 @@ export default function Page() {
                     "flex-1 self-stretch text-center text-[16px] leading-[24px] font-normal text-black"
                   )}
                 >
-                  Next Challenge
+                  {copy.nextChallenge}
                 </div>
                 <div
                   className={cn(
@@ -1485,7 +1524,7 @@ export default function Page() {
               >
                 <img
                   src={dlsAssets.home}
-                  alt="Home"
+                  alt={copy.homeIconAlt}
                   className="h-[24px] w-[24px]"
                   width={24}
                   height={24}
@@ -1498,7 +1537,7 @@ export default function Page() {
                     "text-center text-[16px] leading-[24px] font-bold text-white"
                   )}
                 >
-                  Back to Home
+                  {copy.homePage}
                 </span>
               </button>
             </div>
@@ -1520,13 +1559,13 @@ export default function Page() {
                       "text-[18px] leading-[26px] font-extrabold text-black"
                     )}
                   >
-                    Todays Words
+                    {copy.todaysWordsSheetTitle}
                   </h2>
                   <button
                     type="button"
                     onClick={() => setIsMeaningSheetOpen(false)}
                     className="inline-flex h-[32px] w-[32px] items-center justify-center rounded-[8px] border border-black/20"
-                    aria-label="Close meanings"
+                    aria-label={copy.closeMeanings}
                   >
                     <X
                       className="h-[18px] w-[18px] text-black"
@@ -1576,7 +1615,7 @@ export default function Page() {
               "text-center text-[16px] leading-[24px] font-medium text-black/70"
             )}
           >
-            Loading puzzle...
+            {copy.loadingPuzzle}
           </div>
         </main>
       )
@@ -1607,12 +1646,12 @@ export default function Page() {
               <button
                 type="button"
                 onClick={() => setScreen("home")}
-                aria-label="Back to home"
+                aria-label={copy.backToHome}
                 className="inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px]"
               >
                 <img
                   src={dlsAssets.home}
-                  alt="Home"
+                  alt={copy.homeIconAlt}
                   className="h-[24px] w-[24px]"
                   width={24}
                   height={24}
@@ -1631,7 +1670,7 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={handleHintPowerUp}
-                  aria-label="Use hint power-up"
+                  aria-label={copy.useHint}
                   disabled={!canUseHint}
                   className={cn(
                     "inline-flex h-[40px] w-[40px] items-center justify-center rounded-[12px] bg-black p-[8px] transition-[opacity,transform,box-shadow] duration-200",
@@ -1642,7 +1681,7 @@ export default function Page() {
                 >
                   <img
                     src={dlsAssets.hint}
-                    alt="Hint"
+                    alt={copy.hintIconAlt}
                     className="h-[24px] w-[24px]"
                     width={24}
                     height={24}
@@ -1679,7 +1718,7 @@ export default function Page() {
                 <button
                   type="button"
                   onClick={() => setIsPauseOpen(true)}
-                  aria-label="Pause game"
+                  aria-label={copy.pauseGame}
                   className={cn(
                     "inline-flex h-[20px] w-[20px] items-center justify-center",
                     compactMode === "compact" && "h-[18px] w-[18px]",
@@ -1688,7 +1727,7 @@ export default function Page() {
                 >
                   <img
                     src={dlsAssets.pause}
-                    alt="Pause"
+                    alt={copy.pauseIconAlt}
                     className={cn(
                       "h-[20px] w-[20px]",
                       compactMode === "compact" && "h-[18px] w-[18px]",
@@ -1866,10 +1905,10 @@ export default function Page() {
                     {cell.number ? (
                       <span
                         className={cn(
-                          "absolute top-0 left-[2.14px] text-[7.4px] font-semibold text-[#006BAE]",
+                          "absolute top-0 left-[2.14px] text-[9px] font-semibold text-[#006BAE]",
                           compactMode === "compact" &&
-                            "left-[1.8px] text-[6.4px]",
-                          compactMode === "tight" && "left-[1.4px] text-[5.8px]"
+                            "left-[1.8px] text-[7.8px]",
+                          compactMode === "tight" && "left-[1.4px] text-[6.8px]"
                         )}
                       >
                         {cell.number}
@@ -1927,13 +1966,10 @@ export default function Page() {
               <button
                 type="button"
                 onClick={() => cycleClue(-1)}
-                aria-label="Previous clue"
-                className="relative h-[24px] w-[24px] overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+                aria-label={copy.previousClue}
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
               >
-                <ChevronLeft
-                  className="absolute top-[6px] left-[8px] h-[12px] w-[6.85px]"
-                  strokeWidth={3}
-                />
+                <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={3} />
               </button>
 
               <div
@@ -1946,12 +1982,21 @@ export default function Page() {
               >
                 <div
                   className={cn(
-                    "text-[11px] font-semibold tracking-[2.2px] text-[#C5D89D] uppercase",
-                    compactMode === "compact" && "text-[10px] tracking-[2px]",
-                    compactMode === "tight" && "text-[9px] tracking-[1.6px]"
+                    "font-semibold text-[#C5D89D]",
+                    locale === "hi"
+                      ? "text-[18px] leading-[24px]"
+                      : "text-[11px] tracking-[2.2px] uppercase",
+                    compactMode === "compact" &&
+                      (locale === "hi"
+                        ? "text-[16px] leading-[22px]"
+                        : "text-[10px] tracking-[2px]"),
+                    compactMode === "tight" &&
+                      (locale === "hi"
+                        ? "text-[15px] leading-[20px]"
+                        : "text-[9px] tracking-[1.6px]")
                   )}
                 >
-                  Current Clue
+                  {copy.currentClue}
                 </div>
                 <div
                   className={cn(
@@ -1960,22 +2005,21 @@ export default function Page() {
                     compactMode === "tight" && "text-[14px] leading-[17px]"
                   )}
                 >
-                  {activeClue.number}
-                  {activeClue.direction === "across" ? "a" : "d"}.{" "}
-                  {activeClue.clue}
+                  {copy.formatClueLabel(
+                    activeClue.number,
+                    activeClue.direction
+                  )}
+                  . {activeClue.clue}
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => cycleClue(1)}
-                aria-label="Next clue"
-                className="relative h-[24px] w-[24px] overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+                aria-label={copy.nextClue}
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
               >
-                <ChevronRight
-                  className="absolute top-[6px] left-[9px] h-[12px] w-[6.85px]"
-                  strokeWidth={3}
-                />
+                <ChevronRight className="h-[18px] w-[18px]" strokeWidth={3} />
               </button>
             </section>
           </div>
@@ -2060,11 +2104,11 @@ export default function Page() {
                   compactMode === "tight" &&
                     "h-[40px] rounded-[7px] text-[15px] leading-[20px]"
                 )}
-                aria-label="Backspace"
+                aria-label={copy.backspace}
               >
                 <img
                   src={dlsAssets.backspace}
-                  alt="Backspace"
+                  alt={copy.backspace}
                   className={cn(
                     "h-[20px] w-[20px]",
                     compactMode === "compact" && "h-[18px] w-[18px]",
@@ -2085,7 +2129,7 @@ export default function Page() {
             <div className="flex w-full max-w-[320px] flex-col items-center rounded-[20px] bg-white px-[24px] py-[32px] shadow-[0_20px_60px_0_rgba(0,0,0,0.30)]">
               <img
                 src={dlsAssets.timer}
-                alt="Paused"
+                alt={copy.pauseIllustrationAlt}
                 className="h-[48px] w-[48px]"
                 width={48}
                 height={48}
@@ -2093,19 +2137,20 @@ export default function Page() {
                 decoding="async"
               />
               <h2 className="mt-4 text-center text-[24px] leading-[36px] font-semibold text-black">
-                Game Paused
+                {copy.gamePausedTitle}
               </h2>
               <p className="mt-2 text-center text-[18px] leading-[28px] font-normal text-black/70">
-                Take a break and continue when you are ready.
+                {copy.gamePausedDescription}
               </p>
               <div className="mt-6 flex w-full flex-col gap-[10px]">
                 <PauseToggleRow
-                  label="Turn off hints"
+                  label={copy.hintToggle}
                   checked={isHintsTurnedOff}
                   onChange={setIsHintsTurnedOff}
                 />
                 <PauseToggleRow
-                  label="Turn off word blast"
+                  label={copy.bonusWordsToggle}
+                  description={copy.bonusWordsHint}
                   checked={isWordBlastTurnedOff}
                   onChange={setIsWordBlastTurnedOff}
                 />
@@ -2115,7 +2160,7 @@ export default function Page() {
                 onClick={() => setIsPauseOpen(false)}
                 className="mt-6 inline-flex h-[56px] w-full max-w-[240px] items-center justify-center rounded-[12px] bg-black px-4 py-[14px] text-[20px] leading-[30px] font-semibold text-white"
               >
-                Continue
+                {copy.continueButton}
               </button>
             </div>
           </div>
@@ -2194,18 +2239,27 @@ function KeyButton({
 
 function PauseToggleRow({
   label,
+  description,
   checked,
   onChange,
 }: {
   label: string
+  description?: string
   checked: boolean
   onChange: (value: boolean) => void
 }) {
   return (
     <div className="flex items-center justify-between rounded-[12px] border border-black/10 bg-[#F8F6EF] px-[12px] py-[10px]">
-      <span className="text-[14px] leading-[20px] font-semibold text-black">
-        {label}
-      </span>
+      <div className="min-w-0 pr-3">
+        <div className="text-[14px] leading-[20px] font-semibold text-black">
+          {label}
+        </div>
+        {description ? (
+          <div className="mt-1 text-[12px] leading-[18px] text-black/60">
+            {description}
+          </div>
+        ) : null}
+      </div>
       <button
         type="button"
         role="switch"
@@ -2227,17 +2281,17 @@ function PauseToggleRow({
   )
 }
 
-function HomeMascot({ onTap }: { onTap: () => void }) {
+function HomeMascot({ onTap, label }: { onTap: () => void; label: string }) {
   return (
     <button
       type="button"
       onClick={onTap}
       className="rounded-full"
-      aria-label="वर्ग पहेली logo"
+      aria-label={label}
     >
       <img
         src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
-        alt="वर्ग पहेली logo"
+        alt={label}
         className="h-[100px] w-[100px] shrink-0 object-contain"
         width={100}
         height={100}
@@ -2248,11 +2302,11 @@ function HomeMascot({ onTap }: { onTap: () => void }) {
   )
 }
 
-function SummaryCelebrationIcon() {
+function SummaryCelebrationIcon({ alt }: { alt: string }) {
   return (
     <img
       src={dlsAssets.trophy}
-      alt="Trophy"
+      alt={alt}
       className="h-[72px] w-[72px] object-contain"
       width={72}
       height={72}
@@ -2262,11 +2316,11 @@ function SummaryCelebrationIcon() {
   )
 }
 
-function FlameBadge() {
+function FlameBadge({ alt }: { alt: string }) {
   return (
     <img
       src={dlsAssets.fire}
-      alt="Streak"
+      alt={alt}
       className="h-[24px] w-[24px] object-contain"
       width={24}
       height={24}
@@ -2757,9 +2811,9 @@ function readCompletionHistory(
 function buildWeeklyStreakDays(
   dateKey: string,
   completionHistory: Record<string, boolean>,
-  isTodayComplete: boolean
+  isTodayComplete: boolean,
+  labels: readonly string[]
 ): StreakDay[] {
-  const labels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
   const currentDate = new Date(`${dateKey}T00:00:00`)
   const day = currentDate.getDay()
   const mondayOffset = day === 0 ? -6 : 1 - day
@@ -2809,13 +2863,14 @@ function getNextChallengeDateKey(
   return getLocalDateKey(current)
 }
 
-function formatNextChallengeDate(dateKey: string) {
+function formatNextChallengeDate(dateKey: string, locale: string) {
   const date = new Date(`${dateKey}T00:00:00`)
-  const day = String(date.getDate()).padStart(2, "0")
-  const month = new Intl.DateTimeFormat("en-US", { month: "long" }).format(date)
-  const year = date.getFullYear()
 
-  return `${day} ${month} ${year}`
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date)
 }
 
 function getSolvedClueIds(
@@ -2840,29 +2895,34 @@ function formatElapsedTime(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
 }
 
-function formatPuzzleDate(dateKey: string) {
-  return new Intl.DateTimeFormat("en-US", {
+function formatPuzzleDate(dateKey: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     year: "numeric",
   }).format(new Date(`${dateKey}T00:00:00`))
 }
 
-function formatPuzzleDateLong(dateKey: string) {
+function formatPuzzleDateLong(dateKey: string, locale: string) {
   const date = new Date(`${dateKey}T00:00:00`)
-  const day = String(date.getDate()).padStart(2, "0")
-  const month = new Intl.DateTimeFormat("en-US", { month: "long" }).format(date)
-  const year = date.getFullYear()
 
-  return `${day} ${month}, ${year}`
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date)
 }
 
-function normalizeMeaning(meaning: string | undefined, answer: string) {
+function normalizeMeaning(
+  meaning: string | undefined,
+  answer: string,
+  copy: CrosswordCopy
+) {
   const normalized = meaning?.trim() ?? ""
 
   if (normalized) {
     return normalized
   }
 
-  return `Meaning for ${answer} will be added soon.`
+  return copy.formatMeaningFallback(answer)
 }
