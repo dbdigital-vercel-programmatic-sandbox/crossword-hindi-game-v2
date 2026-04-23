@@ -1777,7 +1777,7 @@ export default function Page() {
                     <div
                       key={key}
                       className={cn(
-                        "aspect-square rounded-[3.92px] bg-[#323922]",
+                        "aspect-square rounded-[3.92px] bg-[#09292D]",
                         compactMode === "compact" && "rounded-[3.2px]",
                         compactMode === "tight" && "rounded-[2.8px]"
                       )}
@@ -1852,14 +1852,14 @@ export default function Page() {
                       feedbackMatch?.type === "wrong"
                         ? "animate-clue-shake bg-[#f5b5b5]"
                         : isCursor
-                          ? "bg-[#FF9C55]"
+                          ? "bg-[#B6E8EE]"
                           : completedCell
                             ? "bg-[#D9FFE6]"
                             : isActive
-                              ? "bg-[#FFC191]"
+                              ? "bg-[#B6E8EE]"
                               : "bg-white",
                       isCursor &&
-                        "shadow-[0_0_0_1px_rgba(184,66,18,0.10)] ring-2 ring-[#B84212] ring-inset",
+                        "shadow-[0_0_0_1px_rgba(121,179,186,0.18)] ring-2 ring-[#79B3BA] ring-inset",
                       feedbackMatch?.type === "correct" &&
                         !isSolvedCelebration &&
                         "animate-clue-pop",
@@ -1958,7 +1958,7 @@ export default function Page() {
             <section
               className={cn(
                 homeTitleFont.className,
-                "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#89986D] px-[5px] py-[8px]",
+                "inline-flex min-h-[78px] w-full items-center justify-between self-stretch overflow-hidden rounded-[3px] bg-[#09292D] px-[5px] py-[8px]",
                 compactMode === "compact" && "min-h-[70px] py-[7px]",
                 compactMode === "tight" && "min-h-[62px] py-[6px]"
               )}
@@ -1967,7 +1967,7 @@ export default function Page() {
                 type="button"
                 onClick={() => cycleClue(-1)}
                 aria-label={copy.previousClue}
-                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#B0EFF6] text-black"
               >
                 <ChevronLeft className="h-[18px] w-[18px]" strokeWidth={3} />
               </button>
@@ -1982,7 +1982,7 @@ export default function Page() {
               >
                 <div
                   className={cn(
-                    "font-semibold text-[#C5D89D]",
+                    "font-semibold text-[#B0EFF6]",
                     locale === "hi"
                       ? "text-[18px] leading-[24px]"
                       : "text-[11px] tracking-[2.2px] uppercase",
@@ -2017,7 +2017,7 @@ export default function Page() {
                 type="button"
                 onClick={() => cycleClue(1)}
                 aria-label={copy.nextClue}
-                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#C5D89D] text-black"
+                className="inline-flex h-[28px] w-[28px] items-center justify-center overflow-hidden rounded-[20px] bg-[#B0EFF6] text-black"
               >
                 <ChevronRight className="h-[18px] w-[18px]" strokeWidth={3} />
               </button>
@@ -2290,7 +2290,7 @@ function HomeMascot({ onTap, label }: { onTap: () => void; label: string }) {
       aria-label={label}
     >
       <img
-        src="https://images.bhaskarassets.com/web2images/521/2026/03/frame-2_1774850873.png"
+        src="https://staging-images.bhaskarassets.com/web2images/521/2026/04/crossword-logo_1776932259.png"
         alt={label}
         className="h-[100px] w-[100px] shrink-0 object-contain"
         width={100}
