@@ -64,7 +64,7 @@ export function CrosswordPreview({
                 return (
                   <div
                     key={cellKey}
-                    className="aspect-square rounded-[8px] bg-[#5f6e44]"
+                    className="aspect-square rounded-[8px] bg-[#323922]"
                   />
                 )
               }

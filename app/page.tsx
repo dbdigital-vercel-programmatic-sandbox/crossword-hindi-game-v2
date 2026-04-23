@@ -1777,7 +1777,7 @@ export default function Page() {
                     <div
                       key={key}
                       className={cn(
-                        "aspect-square rounded-[3.92px] bg-[#C5D89D]",
+                        "aspect-square rounded-[3.92px] bg-[#323922]",
                         compactMode === "compact" && "rounded-[3.2px]",
                         compactMode === "tight" && "rounded-[2.8px]"
                       )}
@@ -1917,9 +1917,9 @@ export default function Page() {
 
                     <span
                       className={cn(
-                        "relative z-10 text-center text-[12.56px] leading-none font-semibold transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                        compactMode === "compact" && "text-[11.4px]",
-                        compactMode === "tight" && "text-[10.4px]",
+                        "relative z-10 text-center text-[16px] leading-none font-semibold transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                        compactMode === "compact" && "text-[14px]",
+                        compactMode === "tight" && "text-[12px]",
                         lockSource === "given"
                           ? "text-[#006BAE]"
                           : completedCell ||
