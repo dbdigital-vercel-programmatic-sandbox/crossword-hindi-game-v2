@@ -2094,7 +2094,7 @@ const WordEditorBoard = memo(function WordEditorBoard({
                 className={
                   insideBoundary
                     ? "rounded-[6px] bg-white"
-                    : "rounded-[6px] bg-[#efe7d7]"
+                    : "rounded-[6px] bg-[#323922]"
                 }
               />
             )
