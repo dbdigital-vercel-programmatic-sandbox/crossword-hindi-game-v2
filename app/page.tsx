@@ -1158,7 +1158,7 @@ export default function Page() {
                   <span
                     className={cn(
                       homeBodyFont.className,
-                      "flex flex-col justify-center text-center text-[20px] leading-[30px] font-semibold text-white"
+                      "flex flex-col justify-center text-center text-[19px] leading-[30px] font-semibold text-white"
                     )}
                   >
                     {isPuzzleComplete
@@ -2158,7 +2158,7 @@ export default function Page() {
               <button
                 type="button"
                 onClick={() => setIsPauseOpen(false)}
-                className="mt-6 inline-flex h-[56px] w-full max-w-[240px] items-center justify-center rounded-[12px] bg-black px-4 py-[14px] text-[20px] leading-[30px] font-semibold text-white"
+                className="mt-6 inline-flex h-[56px] w-full max-w-[240px] items-center justify-center rounded-[12px] bg-black px-4 py-[14px] text-[19px] leading-[30px] font-semibold text-white"
               >
                 {copy.continueButton}
               </button>
