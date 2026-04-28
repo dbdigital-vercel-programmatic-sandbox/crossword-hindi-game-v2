@@ -9,7 +9,7 @@ import {
   useState,
   type AnimationEvent,
 } from "react"
-import { ChevronLeft, ChevronRight, X } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react"
 
 import { crosswordLevels } from "@/data/crossword-levels"
 import {
@@ -36,6 +36,8 @@ const gameFont = Noto_Sans({
 const homeTitleFont = gameFont
 const homeBodyFont = gameFont
 const SCREEN_TRANSITION_FALLBACK_MS = 900
+const TOP_HEADER_HEIGHT = 88
+const GAME_TITLE = "क्रॉसवर्ड"
 
 type LockSource = "given" | "revealed" | "solved"
 type FeedbackType = "wrong" | "correct"
@@ -1101,9 +1103,16 @@ export default function Page() {
           data-screen={screenToRender}
           data-screen-motion={motionState}
           data-transition-pair={transitionPair}
-          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#f6f0d7]"
+          className="relative inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#f6f0d7]"
         >
-          <div className="flex h-full flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#f6f0d7] px-[30px] py-[100px]">
+          {/* TODO: Wire this back action to the intended destination. */}
+          <TopHeader title={GAME_TITLE} onBack={() => {}} />
+          <div
+            className="flex h-full flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#f6f0d7] px-[30px] py-[100px]"
+            style={{
+              paddingTop: `calc(env(safe-area-inset-top) + ${TOP_HEADER_HEIGHT}px)`,
+            }}
+          >
             <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px]">
               <div
                 data-screen-slot="hero"
@@ -1326,9 +1335,16 @@ export default function Page() {
           data-screen={screenToRender}
           data-screen-motion={motionState}
           data-transition-pair={transitionPair}
-          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]"
+          className="relative inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]"
         >
-          <div className="mx-auto flex h-full w-full max-w-[390px] flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#F6F0D7] px-[16px] py-[100px]">
+          {/* TODO: Wire this back action to the intended destination. */}
+          <TopHeader title={GAME_TITLE} onBack={() => {}} />
+          <div
+            className="mx-auto flex h-full w-full max-w-[390px] flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#F6F0D7] px-[16px] py-[100px]"
+            style={{
+              paddingTop: `calc(env(safe-area-inset-top) + ${TOP_HEADER_HEIGHT}px)`,
+            }}
+          >
             <div className="inline-flex w-full flex-1 flex-col items-center justify-start gap-[18px]">
               <div
                 data-screen-slot="hero"
@@ -2205,6 +2221,35 @@ export default function Page() {
         {renderScreen(activeScreen, activeMotionState, activePair)}
       </div>
     </div>
+  )
+}
+
+function TopHeader({ title, onBack }: { title: string; onBack?: () => void }) {
+  return (
+    <header className="fixed inset-x-0 top-0 z-40 bg-white shadow-[0px_2px_4px_rgba(0,0,0,0.15)]">
+      <div
+        className="mx-auto flex w-full max-w-[430px] items-center gap-4 p-4"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 16px)" }}
+      >
+        <button
+          type="button"
+          onClick={() => onBack?.()}
+          aria-label="Back"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-[#2B2B2B]"
+        >
+          <ArrowLeft className="h-6 w-6" strokeWidth={2.25} />
+        </button>
+
+        <div
+          className={cn(
+            homeBodyFont.className,
+            "min-w-0 text-[20px] leading-[30px] font-semibold text-[#2B2B2B]"
+          )}
+        >
+          {title}
+        </div>
+      </div>
+    </header>
   )
 }
 
