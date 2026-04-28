@@ -53,6 +53,8 @@ import {
 
 type CmsScreen = "list" | "details" | "words" | "clues"
 
+type DetailsMode = "create" | "republish"
+
 type EditorWord = {
   id: string
   answer: string
@@ -135,6 +137,7 @@ export function CrosswordCms({
     initialFallbackPuzzleId
   )
   const [screen, setScreen] = useState<CmsScreen>("list")
+  const [detailsMode, setDetailsMode] = useState<DetailsMode>("create")
   const [session, setSession] = useState<PuzzleSession>(() =>
     createEmptySession()
   )
@@ -598,6 +601,7 @@ export function CrosswordCms({
   }
 
   function handleCreateNew() {
+    setDetailsMode("create")
     setSession(createEmptySession())
     setCustomWord("")
     setSuggestionGuidanceDraft("")
@@ -616,6 +620,23 @@ export function CrosswordCms({
     setError("")
     setNotice(`Editing ${puzzle.title}. Use Edit words to reshape the layout.`)
     setScreen("clues")
+  }
+
+  function handleRepublishPuzzle(puzzle: CrosswordPuzzle) {
+    setDetailsMode("republish")
+    setSession({
+      ...createSessionFromPuzzle(puzzle),
+      id: null,
+    })
+    setCustomWord("")
+    setSuggestionGuidanceDraft("")
+    setSuggestionGuidance("")
+    setSelectedWordIds([])
+    setError("")
+    setNotice(
+      `Republishing ${puzzle.title}. Update the details, words, or publish date before publishing.`
+    )
+    setScreen("details")
   }
 
   function handleDetailsSubmit(nextSession: PuzzleSession) {
@@ -973,6 +994,7 @@ export function CrosswordCms({
             databaseConnected={databaseConnected}
             onCreateNew={handleCreateNew}
             onOpenPuzzle={handleOpenPuzzle}
+            onRepublishPuzzle={handleRepublishPuzzle}
             onSetFallbackPuzzle={updateFallbackPuzzle}
             onRemoveFallbackPuzzle={() => updateFallbackPuzzle(null)}
           />
@@ -981,6 +1003,7 @@ export function CrosswordCms({
         {screen === "details" ? (
           <PuzzleDetailsForm
             session={session}
+            mode={detailsMode}
             onBack={() => setScreen("list")}
             onSubmit={handleDetailsSubmit}
           />
@@ -1075,6 +1098,7 @@ function ProjectListing({
   databaseConnected,
   onCreateNew,
   onOpenPuzzle,
+  onRepublishPuzzle,
   onSetFallbackPuzzle,
   onRemoveFallbackPuzzle,
 }: {
@@ -1084,6 +1108,7 @@ function ProjectListing({
   databaseConnected: boolean
   onCreateNew: () => void
   onOpenPuzzle: (puzzle: CrosswordPuzzle) => void
+  onRepublishPuzzle: (puzzle: CrosswordPuzzle) => void
   onSetFallbackPuzzle: (puzzle: CrosswordPuzzle) => void
   onRemoveFallbackPuzzle: () => void
 }) {
@@ -1284,6 +1309,11 @@ function ProjectListing({
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
+                            <DropdownMenuItem
+                              onClick={() => onRepublishPuzzle(puzzle)}
+                            >
+                              Republish puzzle
+                            </DropdownMenuItem>
                             {isFallback ? (
                               <DropdownMenuItem
                                 disabled={
@@ -1320,14 +1350,17 @@ function ProjectListing({
 
 function PuzzleDetailsForm({
   session,
+  mode,
   onBack,
   onSubmit,
 }: {
   session: PuzzleSession
+  mode: DetailsMode
   onBack: () => void
   onSubmit: (session: PuzzleSession) => void
 }) {
   const [draft, setDraft] = useState(session)
+  const isRepublish = mode === "republish"
 
   useEffect(() => {
     setDraft(session)
@@ -1352,11 +1385,12 @@ function PuzzleDetailsForm({
         </button>
 
         <h2 className="mt-5 text-2xl font-semibold tracking-[-0.02em]">
-          Create new puzzle
+          {isRepublish ? "Republish puzzle" : "Create new puzzle"}
         </h2>
         <p className="mt-2 text-sm text-[#5f675f]">
-          Start with theme, puzzle name, difficulty, and publish date. The next
-          step suggests connected words from that brief.
+          {isRepublish
+            ? "Start from this puzzle's current details, then update the theme, words, or publish date before scheduling it again."
+            : "Start with theme, puzzle name, difficulty, and publish date. The next step suggests connected words from that brief."}
         </p>
 
         <div className="mt-6 grid gap-4">
