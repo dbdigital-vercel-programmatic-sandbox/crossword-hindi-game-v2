@@ -36,6 +36,7 @@ const gameFont = Noto_Sans({
 const homeTitleFont = gameFont
 const homeBodyFont = gameFont
 const SCREEN_TRANSITION_FALLBACK_MS = 900
+const topHeaderOffsetClass = "pt-[calc(env(safe-area-inset-top)+62px)]"
 
 type LockSource = "given" | "revealed" | "solved"
 type FeedbackType = "wrong" | "correct"
@@ -147,6 +148,43 @@ const dlsAssets = {
   trophy:
     "https://raw.githubusercontent.com/joefrancis-dot/DLS-assets/main/Trophy.svg",
 } as const
+
+type TopHeaderProps = {
+  title: string
+  onBack: () => void
+}
+
+function TopHeader({ title, onBack }: TopHeaderProps) {
+  return (
+    <header className="fixed inset-x-0 top-0 z-40 bg-white shadow-[0_2px_4px_rgba(0,0,0,0.15)]">
+      <div className="mx-auto flex w-full max-w-[400px] items-center gap-[16px] px-[16px] pb-[16px] pt-[calc(env(safe-area-inset-top)+16px)]">
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="Go back"
+          className="inline-flex h-[24px] w-[24px] shrink-0 items-center justify-center text-[#2B2B2B]"
+        >
+          <img
+            src="/top-header-back.svg"
+            alt=""
+            aria-hidden="true"
+            className="h-[24px] w-[24px]"
+            width={24}
+            height={24}
+          />
+        </button>
+        <div
+          className={cn(
+            homeTitleFont.className,
+            "text-left text-[20px] leading-[30px] font-semibold text-[#2B2B2B]"
+          )}
+        >
+          {title}
+        </div>
+      </div>
+    </header>
+  )
+}
 
 export default function Page() {
   const [locale, setLocale] = useState<CrosswordLocale>(
@@ -387,6 +425,9 @@ export default function Page() {
         })),
     [clues, copy]
   )
+  const handlePendingTopHeaderBack = useCallback(() => {
+    // TODO: Wire the home/summary top-header back action once the destination is finalized.
+  }, [])
 
   useEffect(() => {
     if (screen !== "summary") {
@@ -1101,10 +1142,17 @@ export default function Page() {
           data-screen={screenToRender}
           data-screen-motion={motionState}
           data-transition-pair={transitionPair}
-          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#f6f0d7]"
+          className="relative h-svh w-full overflow-y-auto bg-[#f6f0d7]"
         >
-          <div className="flex h-full flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#f6f0d7] px-[30px] py-[100px]">
-            <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px]">
+          <TopHeader title={copy.appName} onBack={handlePendingTopHeaderBack} />
+
+          <div
+            className={cn(
+              topHeaderOffsetClass,
+              "flex min-h-full w-full items-center justify-center bg-[#f6f0d7] px-[30px] pb-[100px]"
+            )}
+          >
+            <div className="inline-flex w-full max-w-[340px] flex-1 flex-col items-center justify-start gap-[20px] py-[24px]">
               <div
                 data-screen-slot="hero"
                 className="flex w-full flex-col items-center justify-start gap-[16px] self-stretch"
@@ -1326,10 +1374,17 @@ export default function Page() {
           data-screen={screenToRender}
           data-screen-motion={motionState}
           data-transition-pair={transitionPair}
-          className="inline-flex h-svh w-full items-center justify-start gap-[10px] overflow-hidden bg-[#F6F0D7]"
+          className="relative h-svh w-full overflow-y-auto bg-[#F6F0D7]"
         >
-          <div className="mx-auto flex h-full w-full max-w-[390px] flex-1 items-center justify-center gap-[10px] overflow-hidden bg-[#F6F0D7] px-[16px] py-[100px]">
-            <div className="inline-flex w-full flex-1 flex-col items-center justify-start gap-[18px]">
+          <TopHeader title={copy.appName} onBack={handlePendingTopHeaderBack} />
+
+          <div
+            className={cn(
+              topHeaderOffsetClass,
+              "mx-auto flex min-h-full w-full max-w-[390px] items-center justify-center bg-[#F6F0D7] px-[16px] pb-[100px]"
+            )}
+          >
+            <div className="inline-flex w-full flex-1 flex-col items-center justify-start gap-[18px] py-[24px]">
               <div
                 data-screen-slot="hero"
                 className="flex w-full flex-col items-center justify-start gap-[12px] self-stretch"
